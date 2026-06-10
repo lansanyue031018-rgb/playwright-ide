@@ -113,6 +113,14 @@ export function findStepEntry(steps, id) {
   return entry?.kind === "step" ? entry : null;
 }
 
+export function findPreferredStep(steps, selectedId, type) {
+  const selected = findStepEntry(steps, selectedId)?.step;
+  if (selected?.type === type) return selected;
+  return flattenSteps(steps)
+    .find(entry => entry.kind === "step" && entry.step.type === type)?.step ||
+    null;
+}
+
 export function getStepRange(steps, startId, endId) {
   const start = findStepEntry(steps, startId);
   const end = findStepEntry(steps, endId);

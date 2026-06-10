@@ -215,8 +215,9 @@ export async function ensureEdgeBrowser(options = {}) {
 
   const edgePath = resolveEdgePath(options.edgePath);
   const port = new URL(endpoint).port || "9222";
-  const userDataDir = expandEnvironment(
-    options.userDataDir || "%TEMP%\\vidu-edge-profile"
+  const userDataDir = resolveBrowserUserDataDir(
+    endpoint,
+    options.userDataDir
   );
   const child = spawn(edgePath, [
     `--remote-debugging-port=${port}`,
@@ -251,6 +252,20 @@ export function resolveEdgePath(configuredPath = "") {
   const found = candidates.find(candidate => existsSync(candidate));
   if (!found) throw new Error("未找到 Microsoft Edge，请手动填写 Edge 路径");
   return found;
+}
+
+export function resolveBrowserUserDataDir(
+  endpoint,
+  configuredPath = "%TEMP%\\vidu-edge-profile-{port}"
+) {
+  const port = new URL(normalizeEndpoint(endpoint)).port || "9222";
+  const template = String(
+    configuredPath || "%TEMP%\\vidu-edge-profile-{port}"
+  );
+  const portAwareTemplate = template === "%TEMP%\\vidu-edge-profile"
+    ? `${template}-{port}`
+    : template;
+  return expandEnvironment(portAwareTemplate.replaceAll("{port}", port));
 }
 
 function appendOutput(stream, run, label) {

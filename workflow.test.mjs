@@ -5,6 +5,7 @@ import { createStep } from "./generator.js";
 import {
   duplicateStep,
   findFlowEntry,
+  findPreferredStep,
   findStepEntry,
   flattenSteps,
   getStepRange,
@@ -12,6 +13,24 @@ import {
   moveStep,
   removeStep
 } from "./workflow.js";
+
+test("selected browser node takes priority over the first browser node", () => {
+  const first = createStep("connect", {
+    endpoint: "http://127.0.0.1:9222"
+  });
+  const selected = createStep("connect", {
+    endpoint: "http://127.0.0.1:9223"
+  });
+
+  assert.equal(
+    findPreferredStep([first, selected], selected.id, "connect").values.endpoint,
+    "http://127.0.0.1:9223"
+  );
+  assert.equal(
+    findPreferredStep([first, selected], null, "connect").values.endpoint,
+    "http://127.0.0.1:9222"
+  );
+});
 
 test("flattenSteps reports nested branch depth and hierarchical numbers", () => {
   const condition = createStep("condition");

@@ -4,7 +4,30 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { createRuntimeService } from "./runtime-service.mjs";
+import {
+  createRuntimeService,
+  resolveBrowserUserDataDir
+} from "./runtime-service.mjs";
+
+test("legacy default Edge profile is isolated by CDP port", () => {
+  assert.match(
+    resolveBrowserUserDataDir(
+      "http://127.0.0.1:9223",
+      "%TEMP%\\vidu-edge-profile"
+    ),
+    /vidu-edge-profile-9223$/
+  );
+});
+
+test("Edge profile paths can use an explicit port placeholder", () => {
+  assert.match(
+    resolveBrowserUserDataDir(
+      "http://127.0.0.1:9333",
+      "%TEMP%\\edge-{port}"
+    ),
+    /edge-9333$/
+  );
+});
 
 test("external scripts are copied under the IDE runtime directory", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "flow-studio-root-"));

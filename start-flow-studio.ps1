@@ -7,6 +7,7 @@ $ServerLog = Join-Path $ServerRuntime "server.log"
 $ServerErrorLog = Join-Path $ServerRuntime "server-error.log"
 $Url = "http://127.0.0.1:8765"
 $HealthUrl = "$Url/api/health"
+$RequiredServiceVersion = "0.1.2"
 $RequiredHistoryApiVersion = 1
 
 New-Item -ItemType Directory -Force -Path $RuntimeRoot, $ServerRuntime | Out-Null
@@ -25,6 +26,7 @@ function Test-Health {
     $null -ne $response -and
     $response.ok -eq $true -and
     $response.service -eq "playwright-flow-studio" -and
+    $response.version -eq $RequiredServiceVersion -and
     $response.historyApiVersion -eq $RequiredHistoryApiVersion
   )
 }
@@ -35,7 +37,10 @@ function Stop-OutdatedFlowStudio {
     $null -eq $response -or
     $response.ok -ne $true -or
     $response.service -ne "playwright-flow-studio" -or
-    $response.historyApiVersion -eq $RequiredHistoryApiVersion
+    (
+      $response.version -eq $RequiredServiceVersion -and
+      $response.historyApiVersion -eq $RequiredHistoryApiVersion
+    )
   ) {
     return
   }

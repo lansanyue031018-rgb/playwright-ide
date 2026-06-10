@@ -1,6 +1,6 @@
 {
   "name": "playwright-flow-studio",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Background-first low-code workflow studio for reusable Playwright browser automation.",
   "private": true,
   "type": "module",

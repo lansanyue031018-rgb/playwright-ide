@@ -14,6 +14,7 @@ import {
 import {
   duplicateStep,
   findFlowEntry,
+  findPreferredStep,
   findStepEntry,
   flattenSteps,
   getStepRange,
@@ -21,7 +22,10 @@ import {
   moveStep,
   removeStep
 } from "./workflow.js";
-import { HISTORY_API_VERSION } from "./service-version.mjs";
+import {
+  HISTORY_API_VERSION,
+  SERVICE_VERSION
+} from "./service-version.mjs";
 
 const STORAGE_KEY = "playwright-flow-studio:v3";
 const PREVIOUS_STORAGE_KEY = "playwright-flow-studio:v2";
@@ -737,7 +741,10 @@ function showToast(message) {
 async function initializeRuntime() {
   try {
     const health = await api("/api/health");
-    if (health.historyApiVersion !== HISTORY_API_VERSION) {
+    if (
+      health.version !== SERVICE_VERSION ||
+      health.historyApiVersion !== HISTORY_API_VERSION
+    ) {
       throw new Error("本地服务版本过旧，请关闭旧服务后重新双击启动脚本");
     }
     elements.runtimeStatus.textContent = `服务正常 · ${health.node}`;
@@ -748,21 +755,21 @@ async function initializeRuntime() {
 }
 
 async function ensureBrowser() {
-  const connect = flattenSteps(state.steps)
-    .find(entry => entry.kind === "step" && entry.step.type === "connect")?.step;
+  const connect = findPreferredStep(state.steps, state.selectedId, "connect");
   const values = connect?.values || {};
-  elements.runtimeStatus.textContent = "正在检测 CDP 端口...";
+  const endpoint = values.endpoint || "http://127.0.0.1:9222";
+  elements.runtimeStatus.textContent = `正在检测 CDP：${endpoint}`;
   try {
     const result = await api("/api/browser/ensure", {
-      endpoint: values.endpoint || "http://127.0.0.1:9222",
+      endpoint,
       startUrl: values.startUrl || "https://www.vidu.com/zh/create/character2video",
-      userDataDir: values.userDataDir || "%TEMP%\\vidu-edge-profile",
+      userDataDir: values.userDataDir || "%TEMP%\\vidu-edge-profile-{port}",
       edgePath: values.edgePath || "",
       timeout: values.waitTimeout || 30000
     });
     elements.runtimeStatus.textContent = result.status.launched
-      ? "Edge 已启动，CDP 可以连接"
-      : "CDP 已存在，直接复用";
+      ? `Edge 已启动：${result.status.endpoint}`
+      : `CDP 已存在，直接复用：${result.status.endpoint}`;
     showToast(elements.runtimeStatus.textContent);
   } catch (error) {
     elements.runtimeStatus.textContent = `浏览器启动失败：${error.message}`;

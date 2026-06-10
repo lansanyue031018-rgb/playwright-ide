@@ -68,6 +68,17 @@ test("Vidu template includes CDP, upload and prompt steps", () => {
   assert.match(code, /prompt-text-editor/);
 });
 
+test("browser nodes use a port-specific Edge profile by default", () => {
+  const step = createStep("connect", {
+    endpoint: "http://127.0.0.1:9223"
+  });
+  const code = generateMjs([step]);
+
+  assert.equal(step.values.userDataDir, "%TEMP%\\vidu-edge-profile-{port}");
+  assert.match(code, /vidu-edge-profile-\{port\}/);
+  assert.match(code, /replaceAll\("\{port\}", port\)/);
+});
+
 test("generated MJS can be imported without losing workflow values", () => {
   const original = [
     createStep("wait", { milliseconds: 2500 }),

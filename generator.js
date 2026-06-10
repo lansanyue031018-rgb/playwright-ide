@@ -7,7 +7,12 @@ export const STEP_DEFINITIONS = {
       field("endpoint", "CDP 地址", "text", "http://127.0.0.1:9222"),
       field("urlIncludes", "页面 URL 包含", "text", "/create/character2video"),
       field("startUrl", "启动页面", "text", "https://www.vidu.com/zh/create/character2video"),
-      field("userDataDir", "浏览器用户目录", "text", "%TEMP%\\vidu-edge-profile"),
+      field(
+        "userDataDir",
+        "浏览器用户目录（{port} 会替换为端口）",
+        "text",
+        "%TEMP%\\vidu-edge-profile-{port}"
+      ),
       field("edgePath", "Edge 路径（留空自动检测）", "text", ""),
       field("waitTimeout", "等待端口（ms）", "number", 30000)
     ]
@@ -891,9 +896,14 @@ function browserBootstrapLines() {
     "  if (!edgePath) throw new Error(\"未找到 Microsoft Edge，请在多开浏览器节点填写 Edge 路径\");",
     "",
     "  const port = new URL(endpoint).port || \"9222\";",
+    "  const profileTemplate = String(options.userDataDir || \"%TEMP%\\\\vidu-edge-profile-{port}\");",
+    "  const portAwareProfile = profileTemplate === \"%TEMP%\\\\vidu-edge-profile\"",
+    "    ? `${profileTemplate}-{port}`",
+    "    : profileTemplate;",
+    "  const userDataDir = expandEnvironment(portAwareProfile.replaceAll(\"{port}\", port));",
     "  const child = spawn(edgePath, [",
     "    `--remote-debugging-port=${port}`,",
-    "    `--user-data-dir=${expandEnvironment(options.userDataDir)}`,",
+    "    `--user-data-dir=${userDataDir}`,",
     "    String(options.startUrl || \"about:blank\")",
     "  ], { detached: true, stdio: \"ignore\" });",
     "  child.unref();",
