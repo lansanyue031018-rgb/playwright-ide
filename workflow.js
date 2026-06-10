@@ -35,14 +35,13 @@ export function flattenSteps(steps, options = {}) {
         );
         addEndMarker(step, container, index, depth, parent, branch, number);
       } else if (step.type === "loop" || step.type === "task") {
-        if (
+        const hideChildren =
           step.type === "task" &&
           step.collapsed !== false &&
-          !includeCollapsedChildren
-        ) {
-          return;
+          !includeCollapsedChildren;
+        if (!hideChildren) {
+          visit(step.children || [], depth + 1, step, "body", number);
         }
-        visit(step.children || [], depth + 1, step, "body", number);
         addEndMarker(step, container, index, depth, parent, branch, number);
       }
     });
@@ -75,14 +74,13 @@ export function flattenSteps(steps, options = {}) {
         );
         addEndMarker(step, container, index, depth, parent, "else", number);
       } else if (step.type === "loop" || step.type === "task") {
-        if (
+        const hideChildren =
           step.type === "task" &&
           step.collapsed !== false &&
-          !includeCollapsedChildren
-        ) {
-          return;
+          !includeCollapsedChildren;
+        if (!hideChildren) {
+          visit(step.children || [], depth + 1, step, "body", number);
         }
-        visit(step.children || [], depth + 1, step, "body", number);
         addEndMarker(step, container, index, depth, parent, "else", number);
       }
     });

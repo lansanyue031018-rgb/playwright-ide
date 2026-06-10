@@ -21,6 +21,7 @@ import {
   moveStep,
   removeStep
 } from "./workflow.js";
+import { HISTORY_API_VERSION } from "./service-version.mjs";
 
 const STORAGE_KEY = "playwright-flow-studio:v3";
 const PREVIOUS_STORAGE_KEY = "playwright-flow-studio:v2";
@@ -110,7 +111,9 @@ function render() {
 
 function renderMutation() {
   render();
-  scheduleHistorySnapshot();
+  clearTimeout(historyTimer);
+  historyTimer = null;
+  recordHistorySnapshot();
 }
 
 function renderFlow() {
@@ -734,6 +737,9 @@ function showToast(message) {
 async function initializeRuntime() {
   try {
     const health = await api("/api/health");
+    if (health.historyApiVersion !== HISTORY_API_VERSION) {
+      throw new Error("本地服务版本过旧，请关闭旧服务后重新双击启动脚本");
+    }
     elements.runtimeStatus.textContent = `服务正常 · ${health.node}`;
     await Promise.all([refreshTasks(), initializeHistory(), refreshLatestRun()]);
   } catch (error) {
@@ -912,12 +918,17 @@ function openSettings() {
 
 async function saveSettings(event) {
   event.preventDefault();
-  const result = await api("/api/history/settings", {
-    limit: Number(elements.historyLimit.value)
-  });
-  setHistoryStatus(result.history);
-  elements.settingsDialog.close();
-  showToast(`历史上限已设为 ${result.history.limit} 步`);
+  try {
+    const result = await api("/api/history/settings", {
+      limit: Number(elements.historyLimit.value)
+    });
+    setHistoryStatus(result.history);
+    elements.settingsDialog.close();
+    showToast(`历史上限已设为 ${result.history.limit} 步`);
+  } catch (error) {
+    elements.historySummary.textContent = `保存失败：${error.message}`;
+    showToast(`设置保存失败：${error.message}`);
+  }
 }
 
 async function clearHistory() {

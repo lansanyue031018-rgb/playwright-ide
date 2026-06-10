@@ -95,7 +95,7 @@ test("collapsed tasks hide their body only in the visible workflow", () => {
   assert.equal(task.collapsed, true);
   assert.deepEqual(
     flattenSteps([task], { includeCollapsedChildren: false }).map(entry => entry.kind),
-    ["step"]
+    ["step", "end"]
   );
   assert.deepEqual(
     flattenSteps([task]).map(entry => entry.kind),

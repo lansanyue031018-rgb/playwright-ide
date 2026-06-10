@@ -9,6 +9,10 @@ import {
   probeCdp
 } from "./runtime-service.mjs";
 import { createHistoryService } from "./history-service.mjs";
+import {
+  HISTORY_API_VERSION,
+  SERVICE_VERSION
+} from "./service-version.mjs";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 const host = process.env.HOST || "127.0.0.1";
@@ -44,6 +48,8 @@ async function handleApi(request, response, requestUrl) {
     sendJson(response, 200, {
       ok: true,
       service: "playwright-flow-studio",
+      version: SERVICE_VERSION,
+      historyApiVersion: HISTORY_API_VERSION,
       node: process.version
     });
     return;

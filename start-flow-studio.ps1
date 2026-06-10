@@ -7,15 +7,60 @@ $ServerLog = Join-Path $ServerRuntime "server.log"
 $ServerErrorLog = Join-Path $ServerRuntime "server-error.log"
 $Url = "http://127.0.0.1:8765"
 $HealthUrl = "$Url/api/health"
+$RequiredHistoryApiVersion = 1
 
 New-Item -ItemType Directory -Force -Path $RuntimeRoot, $ServerRuntime | Out-Null
 
-function Test-Health {
+function Get-Health {
   try {
-    $response = Invoke-RestMethod -Uri $HealthUrl -TimeoutSec 1
-    return $response.ok -eq $true
+    return Invoke-RestMethod -Uri $HealthUrl -TimeoutSec 1
   } catch {
-    return $false
+    return $null
+  }
+}
+
+function Test-Health {
+  $response = Get-Health
+  return (
+    $null -ne $response -and
+    $response.ok -eq $true -and
+    $response.service -eq "playwright-flow-studio" -and
+    $response.historyApiVersion -eq $RequiredHistoryApiVersion
+  )
+}
+
+function Stop-OutdatedFlowStudio {
+  $response = Get-Health
+  if (
+    $null -eq $response -or
+    $response.ok -ne $true -or
+    $response.service -ne "playwright-flow-studio" -or
+    $response.historyApiVersion -eq $RequiredHistoryApiVersion
+  ) {
+    return
+  }
+
+  $connection = Get-NetTCPConnection `
+    -LocalAddress "127.0.0.1" `
+    -LocalPort 8765 `
+    -State Listen `
+    -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+  if (-not $connection) {
+    return
+  }
+
+  $process = Get-CimInstance Win32_Process `
+    -Filter "ProcessId=$($connection.OwningProcess)" `
+    -ErrorAction SilentlyContinue
+  if (
+    $process -and
+    $process.Name -eq "node.exe" -and
+    $process.CommandLine -match "(^|\s|[\\/])server\.mjs(\s|$)"
+  ) {
+    Write-Host "Stopping outdated Playwright Flow Studio service..."
+    Stop-Process -Id $connection.OwningProcess -Force
+    Start-Sleep -Milliseconds 500
   }
 }
 
@@ -87,6 +132,8 @@ if (Test-Health) {
   Write-Host "Playwright Flow Studio is already running: $Url"
   exit 0
 }
+
+Stop-OutdatedFlowStudio
 
 $runtime = Get-NodeRuntime
 Push-Location $Root
