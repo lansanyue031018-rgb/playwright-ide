@@ -1,0 +1,27 @@
+{
+  "name": "playwright-flow-studio",
+  "version": "0.1.0",
+  "description": "Background-first low-code workflow studio for reusable Playwright browser automation.",
+  "private": true,
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lansanyue031018-rgb/playwright-ide.git"
+  },
+  "license": "SEE LICENSE IN LICENSE",
+  "keywords": [
+    "playwright",
+    "browser-automation",
+    "low-code",
+    "workflow",
+    "cdp"
+  ],
+  "scripts": {
+    "test": "node --test *.test.mjs",
+    "serve": "node server.mjs",
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.60.0"
+  }
+}

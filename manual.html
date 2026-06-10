@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Playwright Flow Studio 操作手册</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #080b10;
+      --panel: #111720;
+      --line: #293443;
+      --text: #edf3f8;
+      --muted: #98a5b5;
+      --blue: #6b83ff;
+      --cyan: #55d7c8;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at 10% 0%, #182851, transparent 28%), var(--bg);
+      color: var(--text);
+      font: 15px/1.7 Inter, "Segoe UI", "Microsoft YaHei", sans-serif;
+    }
+    a { color: #9fb1ff; }
+    code, pre { font-family: Consolas, "Cascadia Code", monospace; }
+    header {
+      padding: 48px max(24px, calc((100vw - 1120px) / 2));
+      border-bottom: 1px solid var(--line);
+      background: rgb(8 11 16 / 85%);
+    }
+    header p { max-width: 760px; color: var(--muted); }
+    h1 { margin: 5px 0 8px; font-size: clamp(30px, 5vw, 48px); }
+    h2 { margin-top: 0; color: var(--cyan); }
+    h3 { margin: 30px 0 8px; }
+    .eyebrow { color: var(--cyan); font-size: 12px; font-weight: 800; letter-spacing: .18em; }
+    .layout {
+      display: grid;
+      grid-template-columns: 245px minmax(0, 1fr);
+      gap: 28px;
+      width: min(1120px, calc(100% - 40px));
+      margin: 28px auto 70px;
+    }
+    nav {
+      position: sticky;
+      top: 20px;
+      align-self: start;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel);
+    }
+    nav a { display: block; padding: 5px 0; color: var(--muted); text-decoration: none; }
+    nav a:hover { color: white; }
+    main { min-width: 0; }
+    section {
+      margin-bottom: 18px;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgb(17 23 32 / 94%);
+    }
+    pre {
+      padding: 14px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #070b10;
+      color: #dce9f5;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 9px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { background: #17202c; }
+    .note {
+      padding: 12px 14px;
+      border-left: 3px solid var(--blue);
+      background: #111c31;
+      color: #c3d0e4;
+    }
+    @media (max-width: 820px) {
+      .layout { grid-template-columns: 1fr; }
+      nav { position: static; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="eyebrow">PLAYWRIGHT FLOW STUDIO · PFS</div>
+    <h1>操作手册</h1>
+    <p>面向本地 Playwright 浏览器自动化的节点编排、MJS 导入导出、任务复用、后台运行与调试说明。</p>
+    <a href="./index.html">返回编排器</a>
+  </header>
+  <div class="layout">
+    <nav aria-label="手册目录">
+      <strong>目录</strong>
+      <a href="#start">1. 安装与启动</a>
+      <a href="#browser">2. 多开浏览器/CDP</a>
+      <a href="#workflow">3. 步骤编排</a>
+      <a href="#elements">4. 元素操作</a>
+      <a href="#branches">5. 条件与循环</a>
+      <a href="#tasks">6. 任务复用</a>
+      <a href="#history">7. 撤回与缓存</a>
+      <a href="#import">8. 导入与导出</a>
+      <a href="#run">9. 运行、终止与日志</a>
+      <a href="#vidu">10. Vidu 工作流建议</a>
+      <a href="#troubleshoot">11. 故障排查</a>
+      <a href="#security">12. 安全与许可</a>
+    </nav>
+    <main>
+      <section id="start">
+        <h2>1. 安装与启动</h2>
+        <p>Windows 双击 <code>start-flow-studio.cmd</code>。脚本会调用 PowerShell 检查 Node.js/npm、安装 Playwright、启动本地服务并打开默认浏览器。</p>
+        <pre>npm install
+npm run serve
+# 打开 http://127.0.0.1:8765</pre>
+        <p>Git Bash、WSL、macOS 或 Linux 使用 <code>./start-flow-studio.sh</code>。服务默认仅监听本机。</p>
+      </section>
+
+      <section id="browser">
+        <h2>2. 多开浏览器与 CDP</h2>
+        <p>“多开浏览器”节点先检测 CDP 端口。端口已存在时直接连接；不存在时在 Windows 启动 Edge，并使用独立用户数据目录。</p>
+        <pre>&amp; "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe" `
+  --remote-debugging-port=9222 `
+  --user-data-dir="$env:TEMP\vidu-edge-profile" `
+  "https://www.vidu.com/zh/create/character2video"</pre>
+        <div class="note">同一个端口和用户数据目录对应一个浏览器实例。需要多开时使用不同端口和不同目录。</div>
+      </section>
+
+      <section id="workflow">
+        <h2>3. 步骤编排</h2>
+        <p>左侧选择操作，中间调整顺序，右侧只填写参数。每个步骤右上角的小眼睛控制是否生成该步骤。高级设置才允许覆盖整个代码块。</p>
+        <table>
+          <tr><th>操作</th><th>作用</th></tr>
+          <tr><td>上移/下移</td><td>调整同一层级中的执行顺序。</td></tr>
+          <tr><td>复制</td><td>复制步骤及其嵌套子步骤，并生成新 ID。</td></tr>
+          <tr><td>删除</td><td>删除当前步骤；条件、循环或任务的子步骤会一起删除。</td></tr>
+          <tr><td>眼睛</td><td>临时停止生成该步骤，不删除参数。</td></tr>
+          <tr><td>结束标志</td><td>选中后插入的新步骤位于整个代码块之后。</td></tr>
+        </table>
+      </section>
+
+      <section id="elements">
+        <h2>4. 元素操作</h2>
+        <p>元素节点把“如何定位”和“执行什么动作”分开。优先使用稳定的角色、标签、placeholder 或 test id，最后再使用易变化的 class/CSS。</p>
+        <ul>
+          <li>定位方式：CSS、文本、角色、placeholder、test id、现有 Locator、Locator 表达式。</li>
+          <li>动作：定位、点击、等待、填写、上传、键盘输入、读取状态/值、截图。</li>
+          <li><code>nth()</code>：多个匹配元素中选择指定序号，索引从 0 开始。</li>
+          <li>键盘：普通文本使用 <code>page.keyboard.type()</code>；Enter 等按键使用 <code>page.keyboard.press()</code>。</li>
+        </ul>
+      </section>
+
+      <section id="branches">
+        <h2>5. 条件、循环与等待</h2>
+        <p>条件节点可检测文件、变量或表达式。选中条件节点后插入的步骤成为缩进子步骤；选择“否则”分支可插入备用路径。</p>
+        <p>循环节点同样拥有缩进内容和结束标志。等待节点支持固定毫秒数，或在最小值与最大值之间生成随机等待时间。</p>
+      </section>
+
+      <section id="tasks">
+        <h2>6. 任务复用</h2>
+        <p>“按序号打包步骤”选择开始和结束步骤，将连续步骤保存为现有任务。任务节点默认收起，编辑时再展开。</p>
+        <p>外部 `.mjs` 也可以作为模块任务导入。结构化任务适合继续编辑参数；模块任务适合复用已经稳定的完整脚本片段。</p>
+      </section>
+
+      <section id="history">
+        <h2>7. 撤回、前进与磁盘缓存</h2>
+        <p>流程变更会经过短暂防抖后写入 <code>.flow-cache/snapshots/</code>。浏览器只保留当前流程，不把全部快照常驻内存。</p>
+        <ul>
+          <li><code>Ctrl+Z</code>：撤回。</li>
+          <li><code>Ctrl+Shift+Z</code>：前进。</li>
+          <li>设置页面：配置 2 到 500 个快照上限。</li>
+          <li>撤回后再编辑：放弃原来的前进分支，形成新的历史分支。</li>
+          <li>清空历史：删除磁盘快照，但保留当前流程并将其设为新起点。</li>
+        </ul>
+      </section>
+
+      <section id="import">
+        <h2>8. 导入与导出</h2>
+        <p>JSON 保存完整结构化步骤。由 PFS 生成的 MJS 内含流程元数据，可以无损恢复；普通手写 MJS 会按可识别语句拆分，无法解释的代码保留为自定义或模板代码节点。</p>
+        <div class="note">导入仅解析文件文本，不会执行脚本。运行外部文件时，服务先复制到 <code>runtime/scripts/</code>，确保统一使用 IDE 目录中的 Playwright 依赖。</div>
+      </section>
+
+      <section id="run">
+        <h2>9. 运行、终止与日志</h2>
+        <p>“运行当前脚本”把实时代码写入运行目录后启动独立 Node 子进程。页面每 600ms 读取一次状态和输出。</p>
+        <p>“终止运行”先发送中断信号；若进程未退出，Windows 会通过 <code>taskkill /T /F</code> 终止整个进程树。该功能只控制由当前 IDE 服务启动并记录的任务。</p>
+        <p><code>script-runner.mjs</code> 在顶层模块执行完成后主动退出，因此遗留计时器或连接句柄不会让脚本无限挂起。</p>
+      </section>
+
+      <section id="vidu">
+        <h2>10. Vidu 工作流建议</h2>
+        <ol>
+          <li>先使用多开浏览器节点连接已登录的 Edge。</li>
+          <li>用角色、可见文本或 placeholder 定位“主体”和创建主体弹窗。</li>
+          <li>隐藏文件框稳定存在时直接使用 <code>setInputFiles</code>；动态创建时监听 <code>filechooser</code>。</li>
+          <li>每个页面切换使用可见元素等待，不只依赖固定时间。</li>
+          <li>最终创作按钮保留为停用步骤，人工检查后再启用。</li>
+        </ol>
+      </section>
+
+      <section id="troubleshoot">
+        <h2>11. 故障排查</h2>
+        <table>
+          <tr><th>现象</th><th>检查</th></tr>
+          <tr><td>找不到页面</td><td>确认 Edge 由远程调试端口启动，且 URL 与页面筛选条件一致。</td></tr>
+          <tr><td>Locator 超时</td><td>检查元素是否在弹窗、iframe 或延迟渲染区域；先打印匹配数量。</td></tr>
+          <tr><td>上传无反应</td><td>确认文件绝对路径存在、input 接受的类型正确，并等待预览或上传状态。</td></tr>
+          <tr><td>下一步不可用</td><td>检查必填姓名、标签和图片处理状态，不要只增加固定等待。</td></tr>
+          <tr><td>终止后仍有浏览器</td><td>CDP 模式通常复用独立浏览器实例；终止脚本不等于关闭该浏览器。</td></tr>
+          <tr><td>历史按钮不可用</td><td>确认服务可访问，且 `.flow-cache` 目录可写。</td></tr>
+        </table>
+      </section>
+
+      <section id="security">
+        <h2>12. 安全与许可</h2>
+        <ul>
+          <li>只运行可信 `.mjs`，脚本具有当前本地用户的权限。</li>
+          <li>不要在流程或仓库中保存 Cookie、Token、密码和私钥。</li>
+          <li>本地服务未设计公网鉴权，不要直接暴露到互联网。</li>
+          <li>项目采用 MIT + Commons Clause v1.0，是 source-available 许可，不是 OSI 开源许可。</li>
+        </ul>
+        <p>完整条款见 <a href="./LICENSE">LICENSE</a>。</p>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
+

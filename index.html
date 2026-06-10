@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Playwright Flow Studio</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">BACKGROUND BROWSER AUTOMATION</p>
+      <h1>Playwright Flow Studio</h1>
+      <p class="product-subtitle">浏览器后台自动化低代码编排器 · PFS</p>
+    </div>
+    <div class="topbar-actions">
+      <button id="loadViduTemplate" class="button secondary">载入 Vidu 示例</button>
+      <button id="undoFlow" class="button secondary" title="Ctrl+Z">撤回</button>
+      <button id="redoFlow" class="button secondary" title="Ctrl+Shift+Z">前进</button>
+      <button id="openSettings" class="button secondary">设置</button>
+      <a class="button secondary button-link" href="./manual.html" target="_blank">操作手册</a>
+      <button id="importMjs" class="button secondary">导入 .mjs</button>
+      <button id="importJson" class="button secondary">导入 JSON</button>
+      <button id="exportJson" class="button secondary">导出 JSON</button>
+      <button id="downloadMjs" class="button primary">下载 .mjs</button>
+      <input id="mjsFileInput" type="file" accept=".mjs,.js,text/javascript,application/javascript" hidden>
+      <input id="jsonFileInput" type="file" accept="application/json" hidden>
+    </div>
+  </header>
+
+  <section class="runtime-toolbar">
+    <div class="runtime-group script-path-group">
+      <label for="externalScriptPath">外部 MJS 路径</label>
+      <input id="externalScriptPath" placeholder="C:\path\to\script.mjs">
+      <button id="copyExternalMjs" class="button secondary">复制到 IDE</button>
+      <button id="runExternalMjs" class="button primary">运行该文件</button>
+    </div>
+    <div class="runtime-group">
+      <button id="runCurrentMjs" class="button primary">运行当前脚本</button>
+      <button id="stopCurrentRun" class="button danger" disabled>终止运行</button>
+      <button id="ensureBrowser" class="button secondary">启动/连接浏览器</button>
+    </div>
+    <div class="runtime-group task-group">
+      <button id="saveWorkflowTask" class="button secondary">打包当前流程</button>
+      <button id="saveSelectedTask" class="button secondary">按序号打包步骤</button>
+    </div>
+    <div class="runtime-group script-path-group">
+      <input id="taskModulePath" placeholder="外部任务 MJS 绝对路径">
+      <button id="importTaskModule" class="button secondary">导入模块任务</button>
+    </div>
+    <div id="runtimeStatus" class="runtime-status">本地服务就绪检查中...</div>
+  </section>
+
+  <main class="workspace">
+    <aside class="panel library-panel">
+      <div class="panel-heading">
+        <div>
+          <span class="panel-kicker">STEP LIBRARY</span>
+          <h2>插入操作</h2>
+        </div>
+      </div>
+      <div id="stepLibrary" class="step-library"></div>
+      <div class="notice">
+        生成的脚本默认只连接本机 CDP，不会读取 Cookie、Token 或自动点击最终提交。
+      </div>
+    </aside>
+
+    <section class="panel flow-panel">
+      <div class="panel-heading flow-heading">
+        <div>
+          <span class="panel-kicker">WORKFLOW</span>
+          <h2>步骤编排</h2>
+        </div>
+        <div class="compact-actions">
+          <button id="clearFlow" class="text-button danger">清空</button>
+        </div>
+      </div>
+      <div id="flowEmpty" class="empty-state">
+        从左侧插入操作。选中条件分支后，新操作会作为缩进子步骤插入。
+      </div>
+      <ol id="flowList" class="flow-list"></ol>
+    </section>
+
+    <aside class="panel inspector-panel">
+      <div class="panel-heading">
+        <div>
+          <span class="panel-kicker">INSPECTOR</span>
+          <h2>步骤参数</h2>
+        </div>
+      </div>
+      <div id="inspectorEmpty" class="empty-state compact">
+        选择中间的步骤后编辑参数。
+      </div>
+      <form id="inspectorForm" class="inspector-form"></form>
+    </aside>
+
+    <section class="panel code-panel">
+      <div class="panel-heading code-heading">
+        <div>
+          <span class="panel-kicker">GENERATED MJS</span>
+          <h2>实时脚本</h2>
+        </div>
+        <button id="copyCode" class="button secondary">复制代码</button>
+      </div>
+      <pre class="code-wrap"><code id="codePreview"></code></pre>
+    </section>
+
+    <section class="panel output-panel">
+      <div class="panel-heading code-heading">
+        <div>
+          <span class="panel-kicker">RUN OUTPUT</span>
+          <h2>运行日志</h2>
+        </div>
+        <button id="clearRunOutput" class="button secondary">清空日志</button>
+      </div>
+      <pre id="runOutput" class="code-wrap output-wrap">尚未运行脚本。</pre>
+    </section>
+  </main>
+
+  <dialog id="taskRangeDialog" class="task-range-dialog">
+    <form id="taskRangeForm" method="dialog">
+      <div class="dialog-heading">
+        <div>
+          <span class="panel-kicker">PACKAGE TASK</span>
+          <h2>按步骤序号打包任务</h2>
+        </div>
+        <button type="button" class="icon-button" data-action="close-range" title="关闭">×</button>
+      </div>
+      <div class="dialog-body">
+        <div class="field">
+          <label for="taskRangeName">任务名称</label>
+          <input id="taskRangeName" required placeholder="例如：创建静态主体">
+        </div>
+        <div class="range-fields">
+          <div class="field">
+            <label for="taskRangeStart">开始步骤</label>
+            <select id="taskRangeStart"></select>
+          </div>
+          <div class="field">
+            <label for="taskRangeEnd">结束步骤</label>
+            <select id="taskRangeEnd"></select>
+          </div>
+        </div>
+        <p class="field-help">开始和结束步骤必须位于同一层级；将保存两者之间的连续步骤。</p>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="button secondary" data-action="close-range">取消</button>
+        <button type="submit" class="button primary">保存任务</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="settingsDialog" class="task-range-dialog">
+    <form id="settingsForm" method="dialog">
+      <div class="dialog-heading">
+        <div>
+          <span class="panel-kicker">SETTINGS</span>
+          <h2>编辑器设置</h2>
+        </div>
+        <button type="button" class="icon-button" data-action="close-settings" title="关闭">×</button>
+      </div>
+      <div class="dialog-body">
+        <div class="field">
+          <label for="historyLimit">缓存快照步数上限</label>
+          <input id="historyLimit" type="number" min="2" max="500" step="1">
+          <p class="field-help">
+            快照写入 IDE 目录下的 .flow-cache/snapshots，不把完整历史常驻浏览器内存。
+          </p>
+        </div>
+        <div id="historySummary" class="condition-help">正在读取历史状态...</div>
+      </div>
+      <div class="dialog-actions split-actions">
+        <button id="clearHistory" type="button" class="button danger">清空历史缓存</button>
+        <span class="dialog-action-spacer"></span>
+        <button type="button" class="button secondary" data-action="close-settings">取消</button>
+        <button type="submit" class="button primary">保存设置</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
