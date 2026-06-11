@@ -178,6 +178,32 @@
     </form>
   </dialog>
 
+  <dialog id="customModuleDialog" class="task-range-dialog custom-module-dialog">
+    <form id="customModuleForm" method="dialog">
+      <div class="dialog-heading">
+        <div>
+          <span class="panel-kicker">CUSTOM MODULE</span>
+          <h2>保存自定义模块</h2>
+        </div>
+        <button type="button" class="icon-button" data-action="close-custom-module" title="关闭">×</button>
+      </div>
+      <div class="dialog-body">
+        <div class="field">
+          <label for="customModuleName">模块名称</label>
+          <input id="customModuleName" required placeholder="例如：填写账号并提交">
+        </div>
+        <p class="field-help">
+          取消“设为参数”后，该值会固化进复用代码壳。代理密码等敏感值不要直接保存，优先使用环境变量表达式。
+        </p>
+        <div id="customModuleParameters" class="module-parameters"></div>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="button secondary" data-action="close-custom-module">取消</button>
+        <button type="submit" class="button primary">保存模块</button>
+      </div>
+    </form>
+  </dialog>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script type="module" src="./app.js"></script>

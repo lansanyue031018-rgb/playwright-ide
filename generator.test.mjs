@@ -7,7 +7,12 @@ import {
   createViduTemplate,
   generateMjs
 } from "./generator.js";
-import { normalizeSteps, parseMjs } from "./parser.js";
+import {
+  finalizeParameterizedTemplate,
+  normalizeSteps,
+  parameterizeCode,
+  parseMjs
+} from "./parser.js";
 
 test("wait step generates a concrete waitForTimeout call", () => {
   const code = generateMjs([
@@ -74,9 +79,180 @@ test("browser nodes use a port-specific Edge profile by default", () => {
   });
   const code = generateMjs([step]);
 
-  assert.equal(step.values.userDataDir, "%TEMP%\\vidu-edge-profile-{port}");
-  assert.match(code, /vidu-edge-profile-\{port\}/);
+  assert.equal(
+    step.values.userDataDir,
+    "%TEMP%\\vidu-edge-profile-{account}-{port}"
+  );
+  assert.match(code, /vidu-edge-profile-\{account\}-\{port\}/);
+  assert.match(code, /replaceAll\("\{account\}", sanitizeAccountName\(accountName\)\)/);
   assert.match(code, /replaceAll\("\{port\}", port\)/);
+});
+
+test("result variables are declared once and reused across element steps", () => {
+  const code = generateMjs([
+    createStep("elementAction", {
+      action: "count",
+      locatorType: "css",
+      target: ".first",
+      resultVariable: "result"
+    }),
+    createStep("elementAction", {
+      action: "inputValue",
+      locatorType: "css",
+      target: "#second",
+      resultVariable: "result"
+    })
+  ]);
+
+  assert.equal((code.match(/\blet result\b/g) || []).length, 1);
+  assert.equal((code.match(/\bconst result\b/g) || []).length, 0);
+  assert.equal((code.match(/^result = await /gm) || []).length, 2);
+});
+
+test("blank result variables receive consecutive automatic names", () => {
+  const code = generateMjs([
+    createStep("elementAction", {
+      action: "count",
+      locatorType: "css",
+      target: ".first"
+    }),
+    createStep("elementAction", {
+      action: "isVisible",
+      locatorType: "css",
+      target: ".second"
+    })
+  ]);
+
+  assert.match(code, /\blet [^;]*result[^;]*result2[^;]*;/);
+  assert.match(code, /result = await page\.locator\("\.first"\)\.count\(\);/);
+  assert.match(code, /result2 = await page\.locator\("\.second"\)\.isVisible\(\);/);
+});
+
+test("multiple browser nodes reuse predeclared common variables", () => {
+  const code = generateMjs([
+    createStep("connect", {
+      endpoint: "http://127.0.0.1:9223",
+      browserVariable: "browser",
+      contextVariable: "context",
+      pageVariable: "page"
+    }),
+    createStep("connect", {
+      endpoint: "http://127.0.0.1:9224",
+      browserVariable: "browser",
+      contextVariable: "context",
+      pageVariable: "page"
+    })
+  ]);
+
+  assert.equal((code.match(/\blet browser\b/g) || []).length, 1);
+  assert.equal((code.match(/\bconst browser\b/g) || []).length, 0);
+  assert.equal((code.match(/^browser = await chromium\.connectOverCDP/gm) || []).length, 2);
+});
+
+test("custom code can become a parameterized reusable module", () => {
+  const draft = parameterizeCode(
+    'await page.locator("#name").fill("Alice");\nawait page.waitForTimeout(1200);'
+  );
+  draft.parameters[0].enabled = true;
+  draft.parameters[0].label = "姓名选择器";
+  draft.parameters[1].enabled = false;
+  draft.parameters[2].enabled = true;
+  draft.parameters[2].label = "等待时间";
+
+  const module = finalizeParameterizedTemplate(
+    draft.template,
+    draft.parameters
+  );
+  const code = generateMjs([
+    createStep("customModule", {
+      moduleName: "填写姓名",
+      template: module.template,
+      parameters: module.parameters.map(parameter => ({
+        ...parameter,
+        value: parameter.label === "姓名选择器" ? "#nickname" : 2500
+      }))
+    })
+  ]);
+
+  assert.equal(module.parameters.length, 2);
+  assert.match(code, /page\.locator\("#nickname"\)\.fill\("Alice"\)/);
+  assert.match(code, /waitForTimeout\(2500\)/);
+});
+
+test("stealth is imported only when a browser node enables it", () => {
+  const normalCode = generateMjs([createStep("connect")]);
+  const stealthCode = generateMjs([
+    createStep("connect", { stealthEnabled: true })
+  ]);
+
+  assert.doesNotMatch(normalCode, /playwright-extra/);
+  assert.match(stealthCode, /from "playwright-extra"/);
+  assert.match(stealthCode, /puppeteer-extra-plugin-stealth/);
+  assert.match(stealthCode, /chromium\.use\(StealthPlugin\(\)\);/);
+});
+
+test("CDP browser nodes generate isolated profile and proxy launch arguments", () => {
+  const code = generateMjs([
+    createStep("connect", {
+      sessionMode: "cdp",
+      endpoint: "http://127.0.0.1:9223",
+      accountName: "account-1",
+      userDataDir: "%TEMP%\\pfs-{account}-{port}",
+      proxyEnabled: true,
+      proxyServer: "http://127.0.0.1:7897",
+      proxyBypass: "localhost"
+    })
+  ]);
+
+  assert.match(code, /accountName: "account-1"/);
+  assert.match(code, /proxyServer: "http:\/\/127\.0\.0\.1:7897"/);
+  assert.match(code, /`--proxy-server=\$\{options\.proxyServer\}`/);
+  assert.match(code, /replaceAll\("\{account\}", sanitizeAccountName\(accountName\)\)/);
+});
+
+test("persistent browser nodes generate one profile and proxy per account", () => {
+  const code = generateMjs([
+    createStep("connect", {
+      sessionMode: "persistent",
+      accountName: "account-2",
+      userDataDir: "E:\\profiles\\{account}",
+      channel: "msedge",
+      headless: false,
+      proxyEnabled: true,
+      proxyServer: "socks5://127.0.0.1:1080",
+      proxyAuthMode: "environment",
+      proxyUsernameEnv: "ACCOUNT2_PROXY_USER",
+      proxyPasswordEnv: "ACCOUNT2_PROXY_PASS"
+    })
+  ]);
+
+  assert.match(code, /chromium\.launchPersistentContext/);
+  assert.match(code, /resolveProfilePath\("E:\\\\profiles\\\\\{account\}"/);
+  assert.match(code, /server: "socks5:\/\/127\.0\.0\.1:1080"/);
+  assert.match(code, /process\.env\["ACCOUNT2_PROXY_USER"\]/);
+  assert.match(code, /process\.env\["ACCOUNT2_PROXY_PASS"\]/);
+});
+
+test("isolated context nodes load and save storage state with their own proxy", () => {
+  const code = generateMjs([
+    createStep("connect", {
+      sessionMode: "context",
+      accountName: "account-3",
+      browserVariable: "browser3",
+      contextVariable: "context3",
+      pageVariable: "page3",
+      storageStatePath: "./states/account3.json",
+      saveStorageState: true,
+      proxyEnabled: true,
+      proxyServer: "http://127.0.0.1:8080"
+    })
+  ]);
+
+  assert.match(code, /browser3 = await chromium\.launch/);
+  assert.match(code, /context3 = await browser3\.newContext/);
+  assert.match(code, /storageState: existsSync\("\.\/states\/account3\.json"\)/);
+  assert.match(code, /ensureParentDirectory\("\.\/states\/account3\.json"\);/);
+  assert.match(code, /await context3\.storageState\(\{ path: "\.\/states\/account3\.json" \}\);/);
 });
 
 test("generated MJS can be imported without losing workflow values", () => {
@@ -474,4 +650,28 @@ for (const tag of config.tags) {
   assert.equal(result.steps[0].children[0].type, "elementAction");
   assert.equal(result.steps[0].children[0].values.nthEnabled, true);
   assert.equal(result.steps[0].children[0].values.nthIndex, 1);
+});
+
+test("heuristic import recognizes predeclared variables and later assignments", () => {
+  const source = `
+import { chromium } from "playwright";
+
+let browser, page, result;
+
+//==================== 连接浏览器 ====================
+
+browser = await chromium.connectOverCDP("http://127.0.0.1:9223");
+
+//==================== 读取数量 ====================
+
+result = await page.locator(".item").count();
+`;
+
+  const parsed = parseMjs(source);
+
+  assert.deepEqual(parsed.steps.map(step => step.type), [
+    "connect",
+    "elementAction"
+  ]);
+  assert.equal(parsed.steps[1].values.resultVariable, "result");
 });

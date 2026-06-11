@@ -7,6 +7,6 @@ import {
 } from "./service-version.mjs";
 
 test("service version advertises the disk history API required by the frontend", () => {
-  assert.equal(SERVICE_VERSION, "0.1.2");
+  assert.equal(SERVICE_VERSION, "0.1.3");
   assert.equal(HISTORY_API_VERSION, 1);
 });

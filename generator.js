@@ -2,19 +2,90 @@ export const STEP_DEFINITIONS = {
   connect: {
     label: "多开浏览器",
     icon: "CDP",
-    description: "检测调试端口，必要时启动 Edge，再连接并查找页面",
+    description: "按账号隔离 Profile、Context 和代理，再连接或启动浏览器",
     fields: [
-      field("endpoint", "CDP 地址", "text", "http://127.0.0.1:9222"),
+      selectField("sessionMode", "会话模式", "cdp", [
+        ["cdp", "CDP 独立 Profile（长期登录）"],
+        ["persistent", "持久化 Context（长期登录）"],
+        ["context", "临时隔离 Context（storageState）"]
+      ]),
+      field("accountName", "账号标识", "text", "account1"),
+      field("browserVariable", "Browser 变量名", "text", "browser", {
+        hideWhen: { sessionMode: ["persistent"] }
+      }),
+      field("contextVariable", "Context 变量名", "text", "context"),
+      field("pageVariable", "Page 变量名", "text", "page"),
+      field("endpoint", "CDP 地址", "text", "http://127.0.0.1:9222", {
+        showWhen: { sessionMode: ["cdp"] }
+      }),
       field("urlIncludes", "页面 URL 包含", "text", "/create/character2video"),
       field("startUrl", "启动页面", "text", "https://www.vidu.com/zh/create/character2video"),
       field(
         "userDataDir",
-        "浏览器用户目录（{port} 会替换为端口）",
+        "浏览器用户目录（支持 {account}、{port}）",
         "text",
-        "%TEMP%\\vidu-edge-profile-{port}"
+        "%TEMP%\\vidu-edge-profile-{account}-{port}",
+        {
+          showWhen: { sessionMode: ["cdp", "persistent"] }
+        }
       ),
-      field("edgePath", "Edge 路径（留空自动检测）", "text", ""),
-      field("waitTimeout", "等待端口（ms）", "number", 30000)
+      field("edgePath", "Edge 路径（留空自动检测）", "text", "", {
+        showWhen: { sessionMode: ["cdp"] }
+      }),
+      field("waitTimeout", "等待端口（ms）", "number", 30000, {
+        showWhen: { sessionMode: ["cdp"] }
+      }),
+      field("channel", "浏览器通道", "text", "msedge", {
+        showWhen: { sessionMode: ["persistent", "context"] }
+      }),
+      checkboxField("headless", "无头运行", false, {
+        showWhen: { sessionMode: ["persistent", "context"] }
+      }),
+      field("storageStatePath", "登录态文件", "text", "./states/{account}.json", {
+        showWhen: { sessionMode: ["context"] }
+      }),
+      checkboxField("saveStorageState", "结束前保存登录态", true, {
+        showWhen: { sessionMode: ["context"] }
+      }),
+      checkboxField("proxyEnabled", "启用独立代理", false),
+      field("proxyServer", "代理服务器", "text", "http://127.0.0.1:7897", {
+        showWhen: { proxyEnabled: ["true"] }
+      }),
+      field("proxyBypass", "代理绕过列表", "text", "localhost;127.0.0.1", {
+        showWhen: { proxyEnabled: ["true"] }
+      }),
+      selectField("proxyAuthMode", "代理认证", "none", [
+        ["none", "无认证"],
+        ["environment", "从环境变量读取"],
+        ["direct", "直接填写"]
+      ], {
+        showWhen: { proxyEnabled: ["true"] }
+      }),
+      field("proxyUsernameEnv", "用户名环境变量", "text", "PROXY_USERNAME", {
+        showWhen: {
+          proxyEnabled: ["true"],
+          proxyAuthMode: ["environment"]
+        }
+      }),
+      field("proxyPasswordEnv", "密码环境变量", "text", "PROXY_PASSWORD", {
+        showWhen: {
+          proxyEnabled: ["true"],
+          proxyAuthMode: ["environment"]
+        }
+      }),
+      field("proxyUsername", "代理用户名", "text", "", {
+        showWhen: {
+          proxyEnabled: ["true"],
+          proxyAuthMode: ["direct"]
+        }
+      }),
+      field("proxyPassword", "代理密码", "password", "", {
+        showWhen: {
+          proxyEnabled: ["true"],
+          proxyAuthMode: ["direct"]
+        }
+      }),
+      checkboxField("stealthEnabled", "启用 playwright-extra stealth", false)
     ]
   },
   comment: {
@@ -280,6 +351,14 @@ export const STEP_DEFINITIONS = {
     fields: [
       field("code", "JavaScript", "textarea", "// 使用 page、browser 等已有变量")
     ]
+  },
+  customModule: {
+    label: "自定义模块",
+    icon: "MOD",
+    description: "插入已保存的参数化自定义代码壳",
+    fields: [
+      field("moduleId", "现有自定义模块", "custom-module-select", "")
+    ]
   }
 };
 
@@ -331,8 +410,17 @@ export function createId() {
 }
 
 export function generateMjs(steps) {
-  const enabledSteps = filterEnabledTree(steps);
-  const hasConnect = enabledSteps.some(step => step.type === "connect");
+  const generation = prepareGeneration(steps);
+  const enabledSteps = generation.steps;
+  const allSteps = walkSteps(enabledSteps);
+  const hasConnect = allSteps.some(step => step.type === "connect");
+  const hasCdpConnect = allSteps.some(
+    step => step.type === "connect" && (step.values.sessionMode || "cdp") === "cdp"
+  );
+  const hasStealth = allSteps.some(
+    step => step.type === "connect" && step.values.stealthEnabled
+  );
+  const hasStorageStateSave = generation.storageStateSaves.length > 0;
   const hasFileCondition = walkSteps(enabledSteps).some(
     step => step.type === "condition" && step.values.conditionType === "file"
   );
@@ -343,27 +431,53 @@ export function generateMjs(steps) {
     )
   );
   const lines = [
-    'import { chromium } from "playwright";',
+    `import { chromium } from "${hasStealth ? "playwright-extra" : "playwright"}";`,
+    ...(hasStealth
+      ? [
+          'import StealthPlugin from "puppeteer-extra-plugin-stealth";',
+          "chromium.use(StealthPlugin());"
+        ]
+      : []),
+    ...(hasCdpConnect
+      ? [
+          'import { spawn } from "node:child_process";'
+        ]
+      : []),
+    ...(hasCdpConnect || hasStorageStateSave
+      ? ['import path from "node:path";']
+      : []),
     ...(hasConnect
       ? [
-          'import { spawn } from "node:child_process";',
-          'import { existsSync } from "node:fs";',
-          'import path from "node:path";'
+          `import { ${[
+            "existsSync",
+            ...(hasStorageStateSave ? ["mkdirSync"] : [])
+          ].join(", ")} } from "node:fs";`
         ]
       : []),
     ...(hasFileCondition && !hasFsImport ? ['import fs from "node:fs";'] : []),
     `// playwright-flow-studio:${encodeWorkflowMetadata(steps)}`,
     "",
-    ...(hasConnect ? [...browserBootstrapLines(), ""] : [])
+    ...(hasConnect
+      ? [
+          ...browserBootstrapLines(hasCdpConnect, hasStorageStateSave),
+          ""
+        ]
+      : []),
+    ...(generation.commonVariables.length
+      ? [`let ${generation.commonVariables.join(", ")};`, ""]
+      : []),
+    ...(generation.resultVariables.length
+      ? [`let ${generation.resultVariables.join(", ")};`, ""]
+      : [])
   ];
 
   if (!hasConnect) {
     lines.push(
       section("连接浏览器"),
       "",
-      'const browser = await chromium.connectOverCDP("http://127.0.0.1:9222");',
-      "const pages = browser.contexts().flatMap(context => context.pages());",
-      "const page = pages[0];",
+      'browser = await chromium.connectOverCDP("http://127.0.0.1:9222");',
+      "pages = browser.contexts().flatMap(context => context.pages());",
+      "page = pages[0];",
       "",
       'if (!page) throw new Error("未找到可用页面");',
       ""
@@ -374,6 +488,15 @@ export function generateMjs(steps) {
     lines.push(...generateStepLines(step, String(index + 1), 0, true));
     if (lines.at(-1) !== "") lines.push("");
   });
+
+  if (generation.storageStateSaves.length) {
+    lines.push(
+      section("保存登录态"),
+      "",
+      ...generation.storageStateSaves,
+      ""
+    );
+  }
 
   lines.push(
     section("完成"),
@@ -395,7 +518,8 @@ export function encodeWorkflowMetadata(steps) {
 }
 
 export function generateStep(step, index) {
-  return generateStepLines(step, String(index + 1), 0, true);
+  const generation = prepareGeneration([step]);
+  return generateStepLines(generation.steps[0], String(index + 1), 0, true);
 }
 
 function generateStepLines(step, number, depth, includeSection) {
@@ -443,22 +567,7 @@ function generateStepBody(step, number) {
 
   switch (step.type) {
     case "connect":
-      const ensureLine = `await ensureCdpBrowser({ endpoint: ${quote(v.endpoint)}, startUrl: ${quote(v.startUrl)}, userDataDir: ${quote(v.userDataDir)}, edgePath: ${quote(v.edgePath)}, timeout: ${safeNumber(v.waitTimeout, 30000)} });`;
-      if (!String(v.urlIncludes || "").trim()) {
-        return [
-          ensureLine,
-          `const browser = await chromium.connectOverCDP(${quote(v.endpoint)});`
-        ];
-      }
-      return [
-        ensureLine,
-        `const browser = await chromium.connectOverCDP(${quote(v.endpoint)});`,
-        "const pages = browser.contexts().flatMap(context => context.pages());",
-        `const page = pages.find(page => page.url().includes(${quote(v.urlIncludes)}));`,
-        "",
-        `if (!page) throw new Error(${quote(`未找到 URL 包含 ${v.urlIncludes} 的页面`)});`,
-        'console.log(`已连接页面：${page.url()}`);'
-      ];
+      return generateBrowserConnection(v);
     case "comment":
       return [section(v.text || `步骤 ${number}`)];
     case "wait":
@@ -486,9 +595,9 @@ function generateStepBody(step, number) {
     case "findPage": {
       const variable = safeIdentifier(v.pageVariable, "page");
       return [
-        "const pages = browser.contexts().flatMap(context => context.pages());",
-        `const ${variable} = pages.find(page =>`,
-        `  page.url().includes(${quote(v.urlIncludes)})`,
+        "pages = browser.contexts().flatMap(context => context.pages());",
+        `${variable} = pages.find(candidate =>`,
+        `  candidate.url().includes(${quote(v.urlIncludes)})`,
         ");",
         "",
         `if (!${variable}) {`,
@@ -508,9 +617,131 @@ function generateStepBody(step, number) {
       return renderParameterizedTemplate(v.template, v.parameters).split("\n");
     case "custom":
       return String(v.code || "").split("\n");
+    case "customModule":
+      return renderParameterizedTemplate(v.template, v.parameters).split("\n");
     default:
       return [`// 未支持的步骤类型：${step.type}`];
   }
+}
+
+function generateBrowserConnection(values) {
+  const mode = values.sessionMode || "cdp";
+  const account = String(values.accountName || "account1");
+  const browser = safeIdentifier(values.browserVariable, "browser");
+  const context = safeIdentifier(values.contextVariable, "context");
+  const page = safeIdentifier(values.pageVariable, "page");
+  const urlIncludes = String(values.urlIncludes || "").trim();
+  const startUrl = String(values.startUrl || "").trim();
+
+  if (mode === "persistent") {
+    return [
+      `${context} = await chromium.launchPersistentContext(`,
+      `  resolveProfilePath(${quote(values.userDataDir)}, ${quote(account)}),`,
+      "  {",
+      `    channel: ${quote(values.channel || "msedge")},`,
+      `    headless: ${Boolean(values.headless)},`,
+      ...proxyOptionLines(values, 4),
+      "  }",
+      ");",
+      `${page} = ${context}.pages().find(candidate => candidate.url().includes(${quote(urlIncludes)})) || ${context}.pages()[0] || await ${context}.newPage();`,
+      ...navigationLines(page, startUrl, urlIncludes),
+      `console.log(${quote(`${account} 已启动持久化浏览器`)});`
+    ];
+  }
+
+  if (mode === "context") {
+    const storageStatePath = resolveTemplatePath(
+      values.storageStatePath,
+      account
+    );
+    return [
+      `${browser} = await chromium.launch({`,
+      `  channel: ${quote(values.channel || "msedge")},`,
+      `  headless: ${Boolean(values.headless)}`,
+      "});",
+      `${context} = await ${browser}.newContext({`,
+      ...(storageStatePath
+        ? [
+            `  storageState: existsSync(${quote(storageStatePath)}) ? ${quote(storageStatePath)} : undefined,`
+          ]
+        : []),
+      ...proxyOptionLines(values, 2),
+      "});",
+      `${page} = await ${context}.newPage();`,
+      ...navigationLines(page, startUrl, ""),
+      `console.log(${quote(`${account} 已启动隔离 Context`)});`
+    ];
+  }
+
+  const ensureLine = `await ensureCdpBrowser({ endpoint: ${quote(values.endpoint)}, startUrl: ${quote(startUrl)}, userDataDir: ${quote(values.userDataDir)}, accountName: ${quote(account)}, edgePath: ${quote(values.edgePath)}, timeout: ${safeNumber(values.waitTimeout, 30000)}, proxyServer: ${values.proxyEnabled ? quote(values.proxyServer) : '""'}, proxyBypass: ${values.proxyEnabled ? quote(values.proxyBypass) : '""'}, proxyUsername: ${proxyCredentialExpression(values, "username")}, proxyPassword: ${proxyCredentialExpression(values, "password")} });`;
+  const lines = [
+    ensureLine,
+    `${browser} = await chromium.connectOverCDP(${quote(values.endpoint)});`
+  ];
+  if (!urlIncludes) return lines;
+
+  lines.push(
+    `${page} = ${browser}.contexts().flatMap(item => item.pages()).find(candidate => candidate.url().includes(${quote(urlIncludes)}));`,
+    "",
+    `if (!${page}) throw new Error(${quote(`未找到 URL 包含 ${urlIncludes} 的页面`)});`,
+    `${context} = ${page}.context();`,
+    `console.log(\`${escapeTemplateLiteral(account)} 已连接页面：\${${page}.url()}\`);`
+  );
+  return lines;
+}
+
+function navigationLines(pageVariable, startUrl, urlIncludes) {
+  if (!startUrl) return [];
+  if (!urlIncludes) {
+    return [
+      `if (${pageVariable}.url() === "about:blank") {`,
+      `  await ${pageVariable}.goto(${quote(startUrl)}, { waitUntil: "domcontentloaded" });`,
+      "}"
+    ];
+  }
+  return [
+    `if (!${pageVariable}.url().includes(${quote(urlIncludes)})) {`,
+    `  await ${pageVariable}.goto(${quote(startUrl)}, { waitUntil: "domcontentloaded" });`,
+    "}"
+  ];
+}
+
+function proxyOptionLines(values, indent) {
+  if (!values.proxyEnabled || !String(values.proxyServer || "").trim()) {
+    return [];
+  }
+  const prefix = " ".repeat(indent);
+  const lines = [
+    `${prefix}proxy: {`,
+    `${prefix}  server: ${quote(values.proxyServer)},`
+  ];
+  if (String(values.proxyBypass || "").trim()) {
+    lines.push(`${prefix}  bypass: ${quote(values.proxyBypass)},`);
+  }
+  if (values.proxyAuthMode && values.proxyAuthMode !== "none") {
+    lines.push(
+      `${prefix}  username: ${proxyCredentialExpression(values, "username")},`,
+      `${prefix}  password: ${proxyCredentialExpression(values, "password")},`
+    );
+  }
+  lines.push(`${prefix}},`);
+  return lines;
+}
+
+function proxyCredentialExpression(values, kind) {
+  if (!values.proxyEnabled || values.proxyAuthMode === "none") return '""';
+  const title = kind === "username" ? "Username" : "Password";
+  if (values.proxyAuthMode === "environment") {
+    const envName = values[`proxy${title}Env`];
+    return `process.env[${quote(envName)}] || ""`;
+  }
+  return quote(values[`proxy${title}`]);
+}
+
+function resolveTemplatePath(template, account, port = "") {
+  return String(template || "")
+    .replaceAll("{account}", sanitizeAccountName(account))
+    .replaceAll("{port}", port);
 }
 
 function generateCondition(step, number, depth) {
@@ -666,6 +897,8 @@ export function summarizeStep(step) {
     case "findPage": return `${v.pageVariable} -> ${v.urlIncludes}`;
     case "templateCode": return `${v.category}：${summarizeParameters(v.parameters)}`;
     case "custom": return shorten(v.code);
+    case "customModule":
+      return `${v.moduleName || "请选择自定义模块"}：${summarizeParameters(v.parameters)}`;
     default: return step.type;
   }
 }
@@ -746,11 +979,14 @@ function generateElementAction(values) {
   }
 
   const locator = buildLocator(values);
-  const result = safeIdentifier(values.resultVariable, "result");
+  const result = safeIdentifier(
+    values.generatedResultVariable || values.resultVariable,
+    "result"
+  );
 
   switch (values.action) {
     case "locate":
-      return [`const ${result} = ${locator};`];
+      return [`${result} = ${locator};`];
     case "wait":
       return [
         `await ${locator}.waitFor({`,
@@ -768,16 +1004,16 @@ function generateElementAction(values) {
       }
       return [`await ${locator}.press(${valueExpression(values.value, values.valueMode)});`];
     case "count":
-      return [`const ${result} = await ${locator}.count();`];
+      return [`${result} = await ${locator}.count();`];
     case "inputValue":
-      return [`const ${result} = await ${locator}.inputValue();`];
+      return [`${result} = await ${locator}.inputValue();`];
     case "isEnabled":
-      return [`const ${result} = await ${locator}.isEnabled();`];
+      return [`${result} = await ${locator}.isEnabled();`];
     case "isVisible":
-      return [`const ${result} = await ${locator}.isVisible();`];
+      return [`${result} = await ${locator}.isVisible();`];
     case "evaluate":
       return [
-        `const ${result} = await ${locator}.evaluate(`,
+        `${result} = await ${locator}.evaluate(`,
         `  ${rawExpression(values.functionExpression, "element => element.textContent")}`,
         ");"
       ];
@@ -835,20 +1071,24 @@ function filterEnabledTree(steps) {
   return (steps || [])
     .filter(step => step.enabled !== false)
     .map(step => {
+      const clone = {
+        ...step,
+        values: { ...step.values }
+      };
       if (step.type === "condition") {
         return {
-          ...step,
+          ...clone,
           children: filterEnabledTree(step.children || []),
           elseChildren: filterEnabledTree(step.elseChildren || [])
         };
       }
       if (step.type === "loop" || step.type === "task") {
         return {
-          ...step,
+          ...clone,
           children: filterEnabledTree(step.children || [])
         };
       }
-      return step;
+      return clone;
     });
 }
 
@@ -866,8 +1106,154 @@ function walkSteps(steps) {
   return result;
 }
 
-function browserBootstrapLines() {
-  return [
+function prepareGeneration(steps) {
+  const preparedSteps = filterEnabledTree(steps);
+  const allSteps = walkSteps(preparedSteps);
+  const commonVariables = new Set();
+  const resultVariables = new Set();
+  const usedNames = new Set();
+
+  const reserve = value => {
+    const identifier = safeIdentifier(value, "");
+    if (identifier) usedNames.add(identifier);
+    return identifier;
+  };
+
+  for (const step of allSteps) {
+    if (step.type === "connect") {
+      const mode = step.values.sessionMode || "cdp";
+      if (mode !== "persistent") reserve(step.values.browserVariable || "browser");
+      reserve(step.values.contextVariable || "context");
+      reserve(step.values.pageVariable || "page");
+    }
+    if (step.type === "findPage") reserve(step.values.pageVariable || "page");
+    if (
+      step.type === "elementAction" &&
+      resultAction(step.values.action) &&
+      String(step.values.resultVariable || "").trim()
+    ) {
+      reserve(step.values.resultVariable);
+    }
+  }
+
+  let automaticResultIndex = 1;
+  const nextResultName = () => {
+    while (true) {
+      const candidate = automaticResultIndex === 1
+        ? "result"
+        : `result${automaticResultIndex}`;
+      automaticResultIndex += 1;
+      if (!usedNames.has(candidate)) {
+        usedNames.add(candidate);
+        return candidate;
+      }
+    }
+  };
+
+  for (const step of allSteps) {
+    if (step.type === "connect") {
+      const mode = step.values.sessionMode || "cdp";
+      if (mode !== "persistent") {
+        commonVariables.add(
+          safeIdentifier(step.values.browserVariable, "browser")
+        );
+      }
+      commonVariables.add(
+        safeIdentifier(step.values.contextVariable, "context")
+      );
+      commonVariables.add(
+        safeIdentifier(step.values.pageVariable, "page")
+      );
+    }
+    if (step.type === "findPage") {
+      commonVariables.add(safeIdentifier(step.values.pageVariable, "page"));
+      commonVariables.add("pages");
+      commonVariables.add("browser");
+    }
+    if (
+      step.type === "elementAction" &&
+      resultAction(step.values.action)
+    ) {
+      const explicit = safeIdentifier(step.values.resultVariable, "");
+      const resolved = explicit || nextResultName();
+      step.values.generatedResultVariable = resolved;
+      resultVariables.add(resolved);
+    }
+  }
+
+  if (!allSteps.some(step => step.type === "connect")) {
+    commonVariables.add("browser");
+    commonVariables.add("pages");
+    commonVariables.add("page");
+  }
+
+  const storageStateSaves = allSteps
+    .filter(step =>
+      step.type === "connect" &&
+      step.values.sessionMode === "context" &&
+      step.values.saveStorageState &&
+      String(step.values.storageStatePath || "").trim()
+    )
+    .map(step => {
+      const context = safeIdentifier(step.values.contextVariable, "context");
+      const target = resolveTemplatePath(
+        step.values.storageStatePath,
+        step.values.accountName
+      );
+      return [
+        `ensureParentDirectory(${quote(target)});`,
+        `await ${context}.storageState({ path: ${quote(target)} });`
+      ];
+    });
+
+  return {
+    steps: preparedSteps,
+    commonVariables: [...commonVariables],
+    resultVariables: [...resultVariables],
+    storageStateSaves: storageStateSaves.flat()
+  };
+}
+
+function resultAction(action) {
+  return ["locate", "count", "inputValue", "isEnabled", "isVisible", "evaluate"]
+    .includes(action);
+}
+
+function browserBootstrapLines(hasCdpConnect, hasStorageStateSave = false) {
+  const lines = [
+    "function expandEnvironment(value) {",
+    "  return String(value || \"\")",
+    "    .replace(/%([^%]+)%/g, (_, key) => process.env[key] || process.env[key.toUpperCase()] || \"\");",
+    "}",
+    "",
+    "function sanitizeAccountName(value) {",
+    "  return String(value || \"account\")",
+    "    .normalize(\"NFKD\")",
+    "    .replace(/[^\\x00-\\x7F]+/g, \" account \")",
+    "    .replace(/[^A-Za-z0-9._-]+/g, \"-\")",
+    "    .replace(/^-+|-+$/g, \"\")",
+    "    .toLowerCase() || \"account\";",
+    "}",
+    "",
+    "function resolveProfilePath(template, accountName, port = \"\") {",
+    "  return expandEnvironment(String(template || \"%TEMP%\\\\pfs-{account}-{port}\")",
+    "    .replaceAll(\"{account}\", sanitizeAccountName(accountName))",
+    "    .replaceAll(\"{port}\", port));",
+    "}"
+  ];
+
+  if (hasStorageStateSave) {
+    lines.push(
+      "",
+      "function ensureParentDirectory(filePath) {",
+      "  mkdirSync(path.dirname(filePath), { recursive: true });",
+      "}"
+    );
+  }
+
+  if (!hasCdpConnect) return lines;
+  lines.push(
+    "",
     "async function ensureCdpBrowser(options) {",
     "  const endpoint = String(options.endpoint || \"http://127.0.0.1:9222\").replace(/\\/$/, \"\");",
     "  const isReady = async () => {",
@@ -884,8 +1270,6 @@ function browserBootstrapLines() {
     "    throw new Error(`CDP 端口未启动：${endpoint}`);",
     "  }",
     "",
-    "  const expandEnvironment = value => String(value || \"\")",
-    "    .replace(/%([^%]+)%/g, (_, key) => process.env[key] || process.env[key.toUpperCase()] || \"\");",
     "  const candidates = [",
     "    expandEnvironment(options.edgePath),",
     "    process.env[\"ProgramFiles(x86)\"] && path.join(process.env[\"ProgramFiles(x86)\"], \"Microsoft\", \"Edge\", \"Application\", \"msedge.exe\"),",
@@ -896,16 +1280,22 @@ function browserBootstrapLines() {
     "  if (!edgePath) throw new Error(\"未找到 Microsoft Edge，请在多开浏览器节点填写 Edge 路径\");",
     "",
     "  const port = new URL(endpoint).port || \"9222\";",
-    "  const profileTemplate = String(options.userDataDir || \"%TEMP%\\\\vidu-edge-profile-{port}\");",
+    "  const profileTemplate = String(options.userDataDir || \"%TEMP%\\\\vidu-edge-profile-{account}-{port}\");",
     "  const portAwareProfile = profileTemplate === \"%TEMP%\\\\vidu-edge-profile\"",
     "    ? `${profileTemplate}-{port}`",
     "    : profileTemplate;",
-    "  const userDataDir = expandEnvironment(portAwareProfile.replaceAll(\"{port}\", port));",
-    "  const child = spawn(edgePath, [",
+    "  const userDataDir = resolveProfilePath(portAwareProfile, options.accountName, port);",
+    "  if (options.proxyServer && (options.proxyUsername || options.proxyPassword)) {",
+    "    throw new Error(\"CDP 模式不支持代理账号密码，请改用持久化或临时隔离 Context\");",
+    "  }",
+    "  const launchArguments = [",
     "    `--remote-debugging-port=${port}`,",
-    "    `--user-data-dir=${userDataDir}`,",
-    "    String(options.startUrl || \"about:blank\")",
-    "  ], { detached: true, stdio: \"ignore\" });",
+    "    `--user-data-dir=${userDataDir}`",
+    "  ];",
+    "  if (options.proxyServer) launchArguments.push(`--proxy-server=${options.proxyServer}`);",
+    "  if (options.proxyBypass) launchArguments.push(`--proxy-bypass-list=${options.proxyBypass}`);",
+    "  launchArguments.push(String(options.startUrl || \"about:blank\"));",
+    "  const child = spawn(edgePath, launchArguments, { detached: true, stdio: \"ignore\" });",
     "  child.unref();",
     "",
     "  const deadline = Date.now() + Number(options.timeout || 30000);",
@@ -915,7 +1305,8 @@ function browserBootstrapLines() {
     "  }",
     "  throw new Error(`等待 CDP 端口超时：${endpoint}`);",
     "}"
-  ];
+  );
+  return lines;
 }
 
 function section(text) {
@@ -964,6 +1355,15 @@ function rawExpression(value, fallback) {
 function safeIdentifier(value, fallback) {
   const identifier = String(value || "").trim();
   return /^[A-Za-z_$][\w$]*$/.test(identifier) ? identifier : fallback;
+}
+
+function sanitizeAccountName(value) {
+  return String(value || "account")
+    .normalize("NFKD")
+    .replace(/[^\x00-\x7F]+/g, " account ")
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase() || "account";
 }
 
 function escapeTemplateLiteral(value) {

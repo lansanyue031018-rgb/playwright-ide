@@ -149,12 +149,19 @@ export function createRuntimeService(root) {
   async function saveTask(task) {
     await ensureDirectories();
     const id = task.id || randomUUID();
+    const mode = ["module", "custom"].includes(task.mode)
+      ? task.mode
+      : "structured";
     const record = {
       id,
       name: String(task.name || "未命名任务").trim() || "未命名任务",
-      mode: task.mode === "module" ? "module" : "structured",
+      mode,
       steps: Array.isArray(task.steps) ? task.steps : [],
       modulePath: String(task.modulePath || ""),
+      template: mode === "custom" ? String(task.template || "") : "",
+      parameters: mode === "custom" && Array.isArray(task.parameters)
+        ? task.parameters
+        : [],
       updatedAt: new Date().toISOString()
     };
     await writeFile(
@@ -207,23 +214,31 @@ export async function probeCdp(endpoint) {
 
 export async function ensureEdgeBrowser(options = {}) {
   const endpoint = normalizeEndpoint(options.endpoint);
+  if (
+    options.proxyServer &&
+    ["environment", "direct"].includes(options.proxyAuthMode)
+  ) {
+    throw new Error("CDP 模式不支持代理账号密码，请改用持久化或临时隔离 Context");
+  }
   const current = await probeCdp(endpoint);
-  if (current.ready) return { ...current, launched: false };
+  if (current.ready) {
+    return {
+      ...current,
+      launched: false,
+      configurationApplied: false,
+      warning: `CDP 已存在：${endpoint}。现有 Profile 或代理不会被重新配置，请更换端口后启动新账号。`
+    };
+  }
   if (process.platform !== "win32") {
     throw new Error(`CDP 端口未启动：${endpoint}`);
   }
 
   const edgePath = resolveEdgePath(options.edgePath);
-  const port = new URL(endpoint).port || "9222";
-  const userDataDir = resolveBrowserUserDataDir(
-    endpoint,
-    options.userDataDir
-  );
-  const child = spawn(edgePath, [
-    `--remote-debugging-port=${port}`,
-    `--user-data-dir=${userDataDir}`,
-    String(options.startUrl || "about:blank")
-  ], {
+  const launchArguments = buildEdgeLaunchArguments(options);
+  const userDataDir = launchArguments
+    .find(argument => argument.startsWith("--user-data-dir="))
+    ?.slice("--user-data-dir=".length);
+  const child = spawn(edgePath, launchArguments, {
     detached: true,
     stdio: "ignore",
     windowsHide: false
@@ -256,16 +271,45 @@ export function resolveEdgePath(configuredPath = "") {
 
 export function resolveBrowserUserDataDir(
   endpoint,
-  configuredPath = "%TEMP%\\vidu-edge-profile-{port}"
+  configuredPath = "%TEMP%\\vidu-edge-profile-{account}-{port}",
+  accountName = "account"
 ) {
   const port = new URL(normalizeEndpoint(endpoint)).port || "9222";
+  const account = sanitizeAccountName(accountName);
   const template = String(
     configuredPath || "%TEMP%\\vidu-edge-profile-{port}"
   );
   const portAwareTemplate = template === "%TEMP%\\vidu-edge-profile"
     ? `${template}-{port}`
     : template;
-  return expandEnvironment(portAwareTemplate.replaceAll("{port}", port));
+  return expandEnvironment(
+    portAwareTemplate
+      .replaceAll("{port}", port)
+      .replaceAll("{account}", account)
+  );
+}
+
+export function buildEdgeLaunchArguments(options = {}) {
+  const endpoint = normalizeEndpoint(options.endpoint);
+  const port = new URL(endpoint).port || "9222";
+  const userDataDir = resolveBrowserUserDataDir(
+    endpoint,
+    options.userDataDir,
+    options.accountName
+  );
+  const argumentsList = [
+    `--remote-debugging-port=${port}`,
+    `--user-data-dir=${userDataDir}`
+  ];
+
+  if (options.proxyServer) {
+    argumentsList.push(`--proxy-server=${options.proxyServer}`);
+  }
+  if (options.proxyBypass) {
+    argumentsList.push(`--proxy-bypass-list=${options.proxyBypass}`);
+  }
+  argumentsList.push(String(options.startUrl || "about:blank"));
+  return argumentsList;
 }
 
 function appendOutput(stream, run, label) {
@@ -336,6 +380,16 @@ function expandEnvironment(value) {
     /%([^%]+)%/g,
     (_, key) => process.env[key] || process.env[key.toUpperCase()] || ""
   );
+}
+
+function sanitizeAccountName(value) {
+  const ascii = String(value || "account")
+    .normalize("NFKD")
+    .replace(/[^\x00-\x7F]+/g, " account ")
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+  return ascii || "account";
 }
 
 function finiteNumber(value, fallback) {

@@ -8,7 +8,9 @@ import {
   summarizeStep
 } from "./generator.js";
 import {
+  finalizeParameterizedTemplate,
   normalizeSteps,
+  parameterizeCode,
   parseMjs
 } from "./parser.js";
 import {
@@ -48,6 +50,10 @@ const elements = {
   taskRangeName: document.querySelector("#taskRangeName"),
   taskRangeStart: document.querySelector("#taskRangeStart"),
   taskRangeEnd: document.querySelector("#taskRangeEnd"),
+  customModuleDialog: document.querySelector("#customModuleDialog"),
+  customModuleForm: document.querySelector("#customModuleForm"),
+  customModuleName: document.querySelector("#customModuleName"),
+  customModuleParameters: document.querySelector("#customModuleParameters"),
   settingsDialog: document.querySelector("#settingsDialog"),
   settingsForm: document.querySelector("#settingsForm"),
   historyLimit: document.querySelector("#historyLimit"),
@@ -74,6 +80,7 @@ let historyStatus = {
 let currentRunId = null;
 let taskRegistry = [];
 let taskRangeEntries = [];
+let customModuleDraft = null;
 
 renderLibrary();
 render();
@@ -274,6 +281,9 @@ function renderInspector() {
       : `选中此${step.type === "loop" ? "循环" : "任务"}后，新操作会进入代码块；选中结束标志后会插到块外。`;
     extra.push(help);
   }
+  if (step.type === "custom") {
+    extra.push(createCustomModuleAction());
+  }
 
   elements.inspectorForm.replaceChildren(
     title,
@@ -318,22 +328,28 @@ function createField(step, field) {
   label.textContent = field.label;
   let control;
 
-  if (field.type === "task-select") {
+  if (["task-select", "custom-module-select"].includes(field.type)) {
     control = document.createElement("select");
+    const customModules = field.type === "custom-module-select";
+    const records = taskRegistry.filter(task =>
+      customModules ? task.mode === "custom" : task.mode !== "custom"
+    );
     const placeholder = document.createElement("option");
     placeholder.value = "";
-    placeholder.textContent = taskRegistry.length
-      ? "请选择现有任务"
-      : "暂无现有任务";
+    placeholder.textContent = records.length
+      ? customModules ? "请选择自定义模块" : "请选择现有任务"
+      : customModules ? "暂无自定义模块" : "暂无现有任务";
     control.append(placeholder);
-    taskRegistry.forEach(task => {
+    records.forEach(task => {
       const option = document.createElement("option");
       option.value = task.id;
-      option.textContent = `${task.name} · ${task.mode === "module" ? "MJS 模块" : "步骤组"}`;
+      option.textContent = customModules
+        ? task.name
+        : `${task.name} · ${task.mode === "module" ? "MJS 模块" : "步骤组"}`;
       option.selected = String(step.values[field.key] || "") === String(task.id);
       control.append(option);
     });
-    control.disabled = taskRegistry.length === 0;
+    control.disabled = records.length === 0;
   } else if (field.type === "select") {
     control = document.createElement("select");
     field.options.forEach(([value, text]) => {
@@ -364,13 +380,15 @@ function createField(step, field) {
 }
 
 function createParameterFields(step) {
-  if (step.type !== "templateCode") return [];
+  if (!["templateCode", "customModule"].includes(step.type)) return [];
 
   const parameters = step.values.parameters || [];
   if (!parameters.length) {
     const empty = document.createElement("p");
     empty.className = "field-help";
-    empty.textContent = "该高级代码步骤没有可自动提取的基础参数。";
+    empty.textContent = step.type === "customModule"
+      ? "该自定义模块没有可配置参数。"
+      : "该高级代码步骤没有可自动提取的基础参数。";
     return [empty];
   }
 
@@ -397,6 +415,22 @@ function createParameterFields(step) {
     else wrapper.append(label, control);
     return wrapper;
   });
+}
+
+function createCustomModuleAction() {
+  const wrapper = document.createElement("div");
+  wrapper.className = "module-action";
+  const help = document.createElement("p");
+  help.className = "field-help";
+  help.textContent =
+    "保存时会提取代码中的字符串、数字和布尔值；勾选的项目成为可配置参数，其余内容保留为复用壳。";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "button secondary";
+  button.textContent = "保存为自定义模块";
+  button.addEventListener("click", openCustomModuleDialog);
+  wrapper.append(help, button);
+  return wrapper;
 }
 
 function createAdvancedPanel(step) {
@@ -475,6 +509,11 @@ function updateSelectedStep(event) {
     renderMutation();
     return;
   }
+  if (step.type === "customModule" && fieldKey === "moduleId") {
+    applyCustomModule(step, event.target.value);
+    renderMutation();
+    return;
+  }
 
   step.values[fieldKey] = event.target.type === "checkbox"
     ? event.target.checked
@@ -490,7 +529,10 @@ function updateSelectedStep(event) {
     "nthEnabled",
     "waitMode",
     "loopType",
-    "mode"
+    "mode",
+    "sessionMode",
+    "proxyEnabled",
+    "proxyAuthMode"
   ].includes(fieldKey)) {
     renderMutation();
   } else {
@@ -687,6 +729,12 @@ function bindToolbar() {
     .forEach(button => button.addEventListener("click", () => {
       elements.taskRangeDialog.close();
     }));
+  elements.customModuleForm.addEventListener("submit", saveCustomModule);
+  elements.customModuleDialog
+    .querySelectorAll('[data-action="close-custom-module"]')
+    .forEach(button => button.addEventListener("click", () => {
+      elements.customModuleDialog.close();
+    }));
   document.querySelector("#clearRunOutput").addEventListener("click", () => {
     elements.runOutput.textContent = "尚未运行脚本。";
   });
@@ -757,17 +805,34 @@ async function initializeRuntime() {
 async function ensureBrowser() {
   const connect = findPreferredStep(state.steps, state.selectedId, "connect");
   const values = connect?.values || {};
+  if ((values.sessionMode || "cdp") !== "cdp") {
+    elements.runtimeStatus.textContent =
+      "持久化/临时 Context 由当前 MJS 启动，请点击“运行当前脚本”";
+    showToast("该会话模式不使用 CDP 端口，请运行当前脚本");
+    return;
+  }
   const endpoint = values.endpoint || "http://127.0.0.1:9222";
   elements.runtimeStatus.textContent = `正在检测 CDP：${endpoint}`;
   try {
     const result = await api("/api/browser/ensure", {
       endpoint,
       startUrl: values.startUrl || "https://www.vidu.com/zh/create/character2video",
-      userDataDir: values.userDataDir || "%TEMP%\\vidu-edge-profile-{port}",
+      userDataDir:
+        values.userDataDir || "%TEMP%\\vidu-edge-profile-{account}-{port}",
+      accountName: values.accountName || "account1",
       edgePath: values.edgePath || "",
-      timeout: values.waitTimeout || 30000
+      timeout: values.waitTimeout || 30000,
+      proxyServer: values.proxyEnabled ? values.proxyServer : "",
+      proxyBypass: values.proxyEnabled ? values.proxyBypass : "",
+      proxyAuthMode: values.proxyEnabled ? values.proxyAuthMode : "none",
+      proxyUsername: values.proxyUsername,
+      proxyPassword: values.proxyPassword,
+      proxyUsernameEnv: values.proxyUsernameEnv,
+      proxyPasswordEnv: values.proxyPasswordEnv
     });
-    elements.runtimeStatus.textContent = result.status.launched
+    elements.runtimeStatus.textContent = result.status.warning
+      ? result.status.warning
+      : result.status.launched
       ? `Edge 已启动：${result.status.endpoint}`
       : `CDP 已存在，直接复用：${result.status.endpoint}`;
     showToast(elements.runtimeStatus.textContent);
@@ -995,7 +1060,7 @@ async function importTaskModule() {
 async function refreshTasks() {
   const result = await api("/api/tasks");
   taskRegistry = result.tasks || [];
-  if (selectedStep()?.type === "task") renderInspector();
+  if (["task", "customModule"].includes(selectedStep()?.type)) renderInspector();
 }
 
 function applySavedTask(step, taskId) {
@@ -1008,6 +1073,108 @@ function applySavedTask(step, taskId) {
     ? rekeySteps(normalizeSteps(structuredClone(saved.steps || [])))
     : [];
   step.collapsed = true;
+}
+
+function applyCustomModule(step, moduleId) {
+  const saved = taskRegistry.find(
+    task => task.id === moduleId && task.mode === "custom"
+  );
+  step.values.moduleId = moduleId;
+  step.values.moduleName = saved?.name || "";
+  step.values.template = saved?.template || "";
+  step.values.parameters = structuredClone(saved?.parameters || []);
+}
+
+function openCustomModuleDialog() {
+  const step = selectedStep();
+  if (step?.type !== "custom") return;
+  const code = String(step.values.code || "").trim();
+  if (!code) {
+    showToast("请先填写自定义代码");
+    return;
+  }
+
+  const draft = parameterizeCode(code);
+  customModuleDraft = {
+    template: draft.template,
+    parameters: draft.parameters.map(parameter => ({
+      ...parameter,
+      enabled: true
+    }))
+  };
+  elements.customModuleName.value = "";
+  renderCustomModuleParameters();
+  elements.customModuleDialog.showModal();
+  elements.customModuleName.focus();
+}
+
+function renderCustomModuleParameters() {
+  const parameters = customModuleDraft?.parameters || [];
+  if (!parameters.length) {
+    const empty = document.createElement("p");
+    empty.className = "condition-help";
+    empty.textContent = "未发现字符串、数字或布尔值。仍可保存为无参数模块。";
+    elements.customModuleParameters.replaceChildren(empty);
+    return;
+  }
+
+  elements.customModuleParameters.replaceChildren(
+    ...parameters.map((parameter, index) => {
+      const row = document.createElement("div");
+      row.className = "module-parameter-row";
+      row.innerHTML = `
+        <label class="checkbox-field module-parameter-toggle">
+          <input type="checkbox" data-module-index="${index}" data-module-field="enabled" checked>
+          <span>设为参数</span>
+        </label>
+        <input data-module-index="${index}" data-module-field="label" value="${escapeAttribute(parameter.label)}" aria-label="参数名称">
+        <select data-module-index="${index}" data-module-field="type" aria-label="参数类型">
+          ${["string", "number", "boolean", "expression"].map(type =>
+            `<option value="${type}" ${parameter.type === type ? "selected" : ""}>${type}</option>`
+          ).join("")}
+        </select>
+        <input data-module-index="${index}" data-module-field="value" value="${escapeAttribute(parameter.value)}" aria-label="默认值">
+      `;
+      return row;
+    })
+  );
+  elements.customModuleParameters.oninput = updateCustomModuleDraft;
+  elements.customModuleParameters.onchange = updateCustomModuleDraft;
+}
+
+function updateCustomModuleDraft(event) {
+  const index = Number(event.target.dataset.moduleIndex);
+  const field = event.target.dataset.moduleField;
+  const parameter = customModuleDraft?.parameters?.[index];
+  if (!parameter || !field) return;
+  parameter[field] = event.target.type === "checkbox"
+    ? event.target.checked
+    : event.target.value;
+}
+
+async function saveCustomModule(event) {
+  event.preventDefault();
+  if (!customModuleDraft) return;
+  const name = elements.customModuleName.value.trim();
+  if (!name) return;
+  const module = finalizeParameterizedTemplate(
+    customModuleDraft.template,
+    customModuleDraft.parameters
+  );
+  try {
+    await api("/api/tasks", {
+      name,
+      mode: "custom",
+      template: module.template,
+      parameters: module.parameters
+    });
+    await refreshTasks();
+    elements.customModuleDialog.close();
+    customModuleDraft = null;
+    showToast(`自定义模块已保存：${name}`);
+  } catch (error) {
+    showToast(`保存自定义模块失败：${error.message}`);
+  }
 }
 
 function rekeySteps(steps) {
