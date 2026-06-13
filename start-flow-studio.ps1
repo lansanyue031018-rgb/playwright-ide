@@ -7,7 +7,7 @@ $ServerLog = Join-Path $ServerRuntime "server.log"
 $ServerErrorLog = Join-Path $ServerRuntime "server-error.log"
 $Url = "http://127.0.0.1:8765"
 $HealthUrl = "$Url/api/health"
-$RequiredServiceVersion = "0.1.4"
+$RequiredServiceVersion = "0.1.5"
 $RequiredHistoryApiVersion = 1
 
 New-Item -ItemType Directory -Force -Path $RuntimeRoot, $ServerRuntime | Out-Null

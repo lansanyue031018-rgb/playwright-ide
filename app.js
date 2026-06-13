@@ -299,9 +299,10 @@ function renderInspector() {
     title,
     ...definition.fields
       .filter(field => isFieldVisible(field, step.values))
-      .map(field => createField(step, field)),
+      .map(field => createField(step, getInterfaceField(step, field))),
     ...extra,
     ...createParameterFields(step),
+    createParameterInterfaceEditor(step, definition),
     ...(supportsAdvancedPanel(step) ? [createAdvancedPanel(step)] : [])
   );
 
@@ -311,6 +312,90 @@ function renderInspector() {
 
 function supportsAdvancedPanel(step) {
   return !["comment", "custom", "messageAction"].includes(step.type);
+}
+
+function getInterfaceField(step, field) {
+  const override = step.values.parameterInterface?.[field.key];
+  if (!override) return field;
+  return {
+    ...field,
+    label: override.label || field.label,
+    type: override.type || field.type,
+    options: override.type === "select"
+      ? normalizeInterfaceOptions(override.options).map(value => [value, value])
+      : field.options
+  };
+}
+
+function createParameterInterfaceEditor(step, definition) {
+  const details = document.createElement("details");
+  details.className = "parameter-interface-editor";
+  const summary = document.createElement("summary");
+  summary.textContent = "参数接口编辑";
+  const help = document.createElement("p");
+  help.className = "field-help";
+  help.textContent = "这里可把当前步骤的原始参数改成更适合复用的接口：重命名、切换输入/下拉类型、配置候选项。";
+  const list = document.createElement("div");
+  list.className = "parameter-interface-list";
+
+  list.replaceChildren(
+    ...definition.fields.map(field => createParameterInterfaceRow(step, field))
+  );
+
+  const addButton = document.createElement("button");
+  addButton.type = "button";
+  addButton.className = "button secondary";
+  addButton.setAttribute("data-parameter-action", "add");
+  addButton.textContent = "添加接口参数";
+  addButton.addEventListener("click", () => addParameterInterface(step));
+  details.append(summary, help, list, addButton);
+  return details;
+}
+
+function createParameterInterfaceRow(step, field) {
+  const override = step.values.parameterInterface?.[field.key] || {};
+  const row = document.createElement("div");
+  row.className = "parameter-interface-row";
+  row.innerHTML = `
+    <span>${escapeHtml(field.label)}</span>
+    <input data-parameter-key="${escapeAttribute(field.key)}" data-parameter-field="label" value="${escapeAttribute(override.label || field.label)}" aria-label="接口名称">
+    <select data-parameter-key="${escapeAttribute(field.key)}" data-parameter-field="type" aria-label="接口类型">
+      ${["text", "textarea", "number", "checkbox", "select", "password"].map(type =>
+        `<option value="${type}" ${(override.type || field.type) === type ? "selected" : ""}>${type}</option>`
+      ).join("")}
+    </select>
+    <input data-parameter-key="${escapeAttribute(field.key)}" data-parameter-field="options" value="${escapeAttribute(normalizeInterfaceOptions(override.options || field.options).join(","))}" placeholder="select 选项，用逗号分隔" aria-label="接口选项">
+  `;
+  return row;
+}
+
+function addParameterInterface(step) {
+  const key = prompt("要暴露的参数键名", "customParam");
+  if (!key) return;
+  step.values[key] ??= "";
+  step.values.parameterInterface ??= {};
+  step.values.parameterInterface[key] = {
+    label: prompt("参数显示名称", key) || key,
+    type: "text",
+    options: []
+  };
+  renderMutation();
+}
+
+function updateParameterInterface(step, target) {
+  const key = target.dataset.parameterKey;
+  const field = target.dataset.parameterField;
+  if (!key || !field) return false;
+  step.values.parameterInterface ??= {};
+  step.values.parameterInterface[key] ??= {};
+  step.values.parameterInterface[key][field] = field === "options"
+    ? target.value.split(",").map(item => item.trim()).filter(Boolean)
+    : target.value;
+  return true;
+}
+
+function normalizeInterfaceOptions(options = []) {
+  return options.map(option => Array.isArray(option) ? option[0] : option).filter(Boolean);
 }
 
 function isFieldVisible(field, values) {
@@ -494,6 +579,11 @@ function updateSelectedStep(event) {
   if (!step) return;
 
   const property = event.target.dataset.property;
+  if (updateParameterInterface(step, event.target)) {
+    renderMutation();
+    return;
+  }
+
   if (property === "advancedEnabled") {
     if (event.target.checked && !step.values.advancedCode) {
       step.values.advancedCode = getAdvancedCode(step);
