@@ -6,10 +6,13 @@ const html = await readFile(new URL("./index.html", import.meta.url), "utf8");
 const app = await readFile(new URL("./app.js", import.meta.url), "utf8");
 const pkg = JSON.parse(await readFile(new URL("./package.json", import.meta.url), "utf8"));
 
-test("run log is promoted into the workflow panel instead of the hidden bottom output panel", () => {
+test("run log replaces the inspector empty box instead of staying under the workflow script area", () => {
+  const inspectorPanel = html.match(/<aside class="panel inspector-panel">[\s\S]*?<\/aside>/)?.[0] ?? "";
   const flowPanel = html.match(/<section class="panel flow-panel">[\s\S]*?<\/section>/)?.[0] ?? "";
-  assert.match(flowPanel, /id="runLogPanel"/);
-  assert.match(flowPanel, /id="runOutput"/);
+  assert.match(inspectorPanel, /id="runLogPanel"/);
+  assert.match(inspectorPanel, /id="runOutput"/);
+  assert.match(inspectorPanel, /class="empty-state compact inspector-empty-hint"/);
+  assert.doesNotMatch(flowPanel, /id="runLogPanel"/);
   assert.doesNotMatch(html, /<section class="panel output-panel">/);
   assert.doesNotMatch(app, /elements\.flowEmpty\.hidden/);
 });

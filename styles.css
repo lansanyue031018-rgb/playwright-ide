@@ -486,7 +486,7 @@ h2 {
 
 .inspector-form {
   min-height: 0;
-  padding: 14px;
+  padding: 0 14px 14px;
   overflow-y: auto;
 }
 
@@ -703,12 +703,15 @@ h2 {
   display: grid;
   grid-template-rows: auto minmax(160px, 1fr);
   gap: 10px;
-  min-height: 240px;
-  margin-bottom: 14px;
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: #080c12;
+}
+
+.inspector-run-log-panel {
+  margin: 14px;
+  min-height: 310px;
 }
 
 .run-log-heading {
