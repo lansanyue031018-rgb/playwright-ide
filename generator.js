@@ -1183,10 +1183,16 @@ function prepareGeneration(steps) {
 
   if (!allSteps.some(step => step.type === "connect")) {
     commonVariables.add("browser");
-    commonVariables.add("pages");
     commonVariables.add("page");
   }
+  commonVariables.add("pages");
+  commonVariables.add("oldPage");
+  commonVariables.add("targetUrl");
+  commonVariables.add("urlIncludes");
+  commonVariables.add("allPages");
+  commonVariables.add("targetPage");
 
+  
   const storageStateSaves = allSteps
     .filter(step =>
       step.type === "connect" &&
