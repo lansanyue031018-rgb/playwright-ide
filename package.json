@@ -1,6 +1,6 @@
 {
   "name": "playwright-flow-studio",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Background-first low-code workflow studio for reusable Playwright browser automation.",
   "private": true,
   "type": "module",
@@ -19,11 +19,52 @@
   "scripts": {
     "test": "node --test *.test.mjs",
     "serve": "node server.mjs",
-    "start": "node server.mjs"
+    "start": "node server.mjs",
+    "desktop:dev": "electron electron/main.cjs",
+    "desktop:pack": "electron-builder --win --dir",
+    "desktop:dist": "electron-builder --win portable"
   },
   "dependencies": {
     "playwright": "^1.60.0",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2"
+  },
+  "devDependencies": {
+    "electron": "^42.4.0",
+    "electron-builder": "^26.15.3"
+  },
+  "main": "electron/main.cjs",
+  "author": "lansanyue",
+  "build": {
+    "appId": "com.lansanyue.playwrightflowstudio",
+    "productName": "Playwright Flow Studio",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "app.js",
+      "index.html",
+      "styles.css",
+      "generator.js",
+      "parser.js",
+      "workflow.js",
+      "runtime-service.mjs",
+      "server.mjs",
+      "service-version.mjs",
+      "package.json",
+      "electron/**/*",
+      "electron/main.cjs",
+      "electron/preload.cjs"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    }
   }
 }

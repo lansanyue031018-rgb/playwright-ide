@@ -1,2 +1,2 @@
-export const SERVICE_VERSION = "0.1.5";
+export const SERVICE_VERSION = "0.1.6";
 export const HISTORY_API_VERSION = 1;

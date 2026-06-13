@@ -699,8 +699,45 @@ h2 {
   grid-column: 1 / 4;
 }
 
-.output-panel {
-  grid-column: 1 / 4;
+.run-log-panel {
+  display: grid;
+  grid-template-rows: auto minmax(160px, 1fr);
+  gap: 10px;
+  min-height: 240px;
+  margin-bottom: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #080c12;
+}
+
+.run-log-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.run-log-heading h3 {
+  margin: 2px 0 0;
+  font-size: 17px;
+}
+
+.run-log-wrap {
+  height: 100%;
+  min-height: 160px;
+  border: 1px solid #152030;
+  border-radius: 12px;
+}
+
+.flow-list:empty::before {
+  content: "暂无步骤，点击左侧任一操作开始编排。";
+  display: block;
+  padding: 18px;
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  color: var(--muted);
+  text-align: center;
 }
 
 .code-wrap {

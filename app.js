@@ -38,7 +38,6 @@ const LEGACY_STORAGE_KEY = "playwright-flow-studio:v1";
 const elements = {
   stepLibrary: document.querySelector("#stepLibrary"),
   flowList: document.querySelector("#flowList"),
-  flowEmpty: document.querySelector("#flowEmpty"),
   inspectorForm: document.querySelector("#inspectorForm"),
   inspectorEmpty: document.querySelector("#inspectorEmpty"),
   codePreview: document.querySelector("#codePreview"),
@@ -141,8 +140,7 @@ function renderFlow() {
   const entries = flattenSteps(state.steps, {
     includeCollapsedChildren: false
   });
-  elements.flowEmpty.hidden = entries.length > 0;
-  elements.flowList.hidden = entries.length === 0;
+  elements.flowList.hidden = false;
 
   elements.flowList.replaceChildren(
     ...entries.map(entry => {

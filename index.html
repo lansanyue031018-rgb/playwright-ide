@@ -75,8 +75,15 @@
           <button id="clearFlow" class="text-button danger">清空</button>
         </div>
       </div>
-      <div id="flowEmpty" class="empty-state">
-        暂无步骤，点击左侧任一操作开始编排。
+      <div id="runLogPanel" class="run-log-panel">
+        <div class="run-log-heading">
+          <div>
+            <span class="panel-kicker">RUN OUTPUT</span>
+            <h3>运行日志</h3>
+          </div>
+          <button id="clearRunOutput" class="button secondary">清空日志</button>
+        </div>
+        <pre id="runOutput" class="code-wrap output-wrap run-log-wrap">尚未运行脚本。</pre>
       </div>
       <ol id="flowList" class="flow-list"></ol>
     </section>
@@ -105,16 +112,6 @@
       <pre class="code-wrap"><code id="codePreview"></code></pre>
     </section>
 
-    <section class="panel output-panel">
-      <div class="panel-heading code-heading">
-        <div>
-          <span class="panel-kicker">RUN OUTPUT</span>
-          <h2>运行日志</h2>
-        </div>
-        <button id="clearRunOutput" class="button secondary">清空日志</button>
-      </div>
-      <pre id="runOutput" class="code-wrap output-wrap">尚未运行脚本。</pre>
-    </section>
   </main>
 
   <dialog id="taskRangeDialog" class="task-range-dialog">

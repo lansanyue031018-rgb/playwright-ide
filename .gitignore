@@ -8,6 +8,7 @@ states/
 *.pid
 .DS_Store
 Thumbs.db
+release/
 AGENTS.md
 *:Zone.Identifier
 备份文件-不用提交/
