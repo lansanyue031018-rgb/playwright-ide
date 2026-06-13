@@ -7,7 +7,7 @@ $ServerLog = Join-Path $ServerRuntime "server.log"
 $ServerErrorLog = Join-Path $ServerRuntime "server-error.log"
 $Url = "http://127.0.0.1:8765"
 $HealthUrl = "$Url/api/health"
-$RequiredServiceVersion = "0.1.2"
+$RequiredServiceVersion = "0.1.4"
 $RequiredHistoryApiVersion = 1
 
 New-Item -ItemType Directory -Force -Path $RuntimeRoot, $ServerRuntime | Out-Null
@@ -143,12 +143,12 @@ Stop-OutdatedFlowStudio
 $runtime = Get-NodeRuntime
 Push-Location $Root
 try {
-  & $runtime.Node --input-type=module -e "import('playwright')" 2>$null
+  & $runtime.Node --input-type=module -e "await Promise.all([import('playwright'), import('playwright-extra'), import('puppeteer-extra-plugin-stealth')])" 2>$null
   if ($LASTEXITCODE -ne 0) {
-    Write-Host "Installing Playwright in the IDE directory..."
-    & $runtime.Npm install playwright
+    Write-Host "Installing Playwright Flow Studio dependencies..."
+    & $runtime.Npm install
     if ($LASTEXITCODE -ne 0) {
-      throw "Playwright installation failed."
+      throw "Dependency installation failed."
     }
   }
 

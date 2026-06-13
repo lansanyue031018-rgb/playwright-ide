@@ -4,6 +4,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  rm,
   stat,
   writeFile
 } from "node:fs/promises";
@@ -15,13 +16,15 @@ export function createRuntimeService(root) {
   const runtimeRoot = path.join(root, "runtime");
   const scriptsDir = path.join(runtimeRoot, "scripts");
   const tasksDir = path.join(runtimeRoot, "tasks");
+  const browserProfilesDir = path.join(runtimeRoot, "browser-profiles");
   const runs = new Map();
   const processes = new Map();
 
   async function ensureDirectories() {
     await Promise.all([
       mkdir(scriptsDir, { recursive: true }),
-      mkdir(tasksDir, { recursive: true })
+      mkdir(tasksDir, { recursive: true }),
+      mkdir(browserProfilesDir, { recursive: true })
     ]);
   }
 
@@ -149,12 +152,21 @@ export function createRuntimeService(root) {
   async function saveTask(task) {
     await ensureDirectories();
     const id = task.id || randomUUID();
+    const mode = ["module", "custom"].includes(task.mode)
+      ? task.mode
+      : "structured";
     const record = {
       id,
       name: String(task.name || "未命名任务").trim() || "未命名任务",
-      mode: task.mode === "module" ? "module" : "structured",
+      mode,
       steps: Array.isArray(task.steps) ? task.steps : [],
       modulePath: String(task.modulePath || ""),
+      template: mode === "custom" ? String(task.template || "") : "",
+      parameters: mode === "custom" && Array.isArray(task.parameters)
+        ? normalizeParameters(task.parameters)
+        : [],
+      publishToLibrary: mode === "custom" && Boolean(task.publishToLibrary),
+      libraryIcon: String(task.libraryIcon || "MOD").trim() || "MOD",
       updatedAt: new Date().toISOString()
     };
     await writeFile(
@@ -163,6 +175,60 @@ export function createRuntimeService(root) {
       "utf8"
     );
     return record;
+  }
+
+
+  async function updateTask(id, changes) {
+    const existing = await readTask(id);
+    if (!existing) throw new Error("未找到任务");
+    return saveTask({ ...existing, ...changes, id });
+  }
+
+  async function deleteTask(id) {
+    const safeId = safeTaskId(id);
+    await rm(path.join(tasksDir, `${safeId}.json`), { force: true });
+    return { id: safeId };
+  }
+
+  async function readTask(id) {
+    const safeId = safeTaskId(id);
+    try {
+      return JSON.parse(await readFile(path.join(tasksDir, `${safeId}.json`), "utf8"));
+    } catch {
+      return null;
+    }
+  }
+
+  async function listStorageItems() {
+    await ensureDirectories();
+    const groups = [
+      ["script", scriptsDir, "runtime/scripts"],
+      ["task", tasksDir, "runtime/tasks"],
+      ["browser-profile", browserProfilesDir, "runtime/browser-profiles"],
+      ["cache", path.join(root, ".flow-cache"), ".flow-cache"]
+    ];
+    const items = [];
+    for (const [type, absoluteDir, relativeBase] of groups) {
+      items.push(...await storageEntries(type, absoluteDir, relativeBase));
+    }
+    const totalBytes = items.reduce((sum, item) => sum + item.bytes, 0);
+    return { items, totalBytes };
+  }
+
+  async function removeStorageItem(id) {
+    const item = parseStorageId(id);
+    const bases = {
+      script: scriptsDir,
+      task: tasksDir,
+      "browser-profile": browserProfilesDir,
+      cache: path.join(root, ".flow-cache")
+    };
+    const base = bases[item.type];
+    if (!base) throw new Error("不允许删除该类型");
+    const target = path.resolve(base, item.relativePath);
+    if (!isInside(target, base)) throw new Error("不允许删除运行目录外的数据");
+    await rm(target, { recursive: true, force: true });
+    return { id };
   }
 
   async function importTaskModule(sourcePath, name) {
@@ -182,13 +248,89 @@ export function createRuntimeService(root) {
     copyScript,
     getLatestRun,
     getRun,
+    deleteTask,
     importTaskModule,
+    listStorageItems,
     listTasks,
+    removeStorageItem,
     runScript,
     saveTask,
     stopRun,
+    updateTask,
     writeCurrentScript
   };
+}
+
+async function storageEntries(type, absoluteDir, relativeBase) {
+  if (!existsSync(absoluteDir)) return [];
+  const entries = await readdir(absoluteDir, { withFileTypes: true });
+  const items = [];
+  for (const entry of entries) {
+    const absolutePath = path.join(absoluteDir, entry.name);
+    const bytes = await directorySize(absolutePath);
+    const relativePath = `${relativeBase}/${entry.name}`.replace(/\\/g, "/");
+    let name = entry.name;
+    if (type === "task" && entry.isFile() && entry.name.endsWith(".json")) {
+      try {
+        const task = JSON.parse(await readFile(absolutePath, "utf8"));
+        name = task.name || name;
+      } catch {}
+    }
+    items.push({
+      id: `${type}:${entry.name}`,
+      type,
+      name,
+      relativePath,
+      bytes,
+      directory: entry.isDirectory()
+    });
+  }
+  return items.sort((a, b) => a.relativePath.localeCompare(b.relativePath, "zh-CN"));
+}
+
+async function directorySize(target) {
+  const info = await stat(target);
+  if (!info.isDirectory()) return info.size;
+  const entries = await readdir(target, { withFileTypes: true });
+  let total = 0;
+  for (const entry of entries) {
+    total += await directorySize(path.join(target, entry.name));
+  }
+  return total;
+}
+
+function parseStorageId(id) {
+  const [type, ...rest] = String(id || "").split(":");
+  const relativePath = rest.join(":");
+  if (!type || !relativePath || relativePath.includes("..")) {
+    throw new Error("不允许删除运行目录外的数据");
+  }
+  return { type, relativePath };
+}
+
+function isInside(target, base) {
+  const relative = path.relative(path.resolve(base), target);
+  return relative && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function safeTaskId(id) {
+  const value = String(id || "");
+  if (!/^[A-Za-z0-9._-]+$/.test(value)) throw new Error("任务 ID 无效");
+  return value;
+}
+
+function normalizeParameters(parameters) {
+  return parameters.map(parameter => ({
+    key: String(parameter.key || ""),
+    label: String(parameter.label || parameter.key || "参数"),
+    type: ["string", "number", "boolean", "expression", "select"].includes(parameter.type)
+      ? parameter.type
+      : "string",
+    value: parameter.value,
+    options: Array.isArray(parameter.options)
+      ? parameter.options.map(option => String(option)).filter(Boolean)
+      : []
+  }));
 }
 
 export async function probeCdp(endpoint) {
@@ -207,23 +349,31 @@ export async function probeCdp(endpoint) {
 
 export async function ensureEdgeBrowser(options = {}) {
   const endpoint = normalizeEndpoint(options.endpoint);
+  if (
+    options.proxyServer &&
+    ["environment", "direct"].includes(options.proxyAuthMode)
+  ) {
+    throw new Error("CDP 模式不支持代理账号密码，请改用持久化或临时隔离 Context");
+  }
   const current = await probeCdp(endpoint);
-  if (current.ready) return { ...current, launched: false };
+  if (current.ready) {
+    return {
+      ...current,
+      launched: false,
+      configurationApplied: false,
+      warning: `CDP 已存在：${endpoint}。现有 Profile 或代理不会被重新配置，请更换端口后启动新账号。`
+    };
+  }
   if (process.platform !== "win32") {
     throw new Error(`CDP 端口未启动：${endpoint}`);
   }
 
   const edgePath = resolveEdgePath(options.edgePath);
-  const port = new URL(endpoint).port || "9222";
-  const userDataDir = resolveBrowserUserDataDir(
-    endpoint,
-    options.userDataDir
-  );
-  const child = spawn(edgePath, [
-    `--remote-debugging-port=${port}`,
-    `--user-data-dir=${userDataDir}`,
-    String(options.startUrl || "about:blank")
-  ], {
+  const launchArguments = buildEdgeLaunchArguments(options);
+  const userDataDir = launchArguments
+    .find(argument => argument.startsWith("--user-data-dir="))
+    ?.slice("--user-data-dir=".length);
+  const child = spawn(edgePath, launchArguments, {
     detached: true,
     stdio: "ignore",
     windowsHide: false
@@ -256,16 +406,45 @@ export function resolveEdgePath(configuredPath = "") {
 
 export function resolveBrowserUserDataDir(
   endpoint,
-  configuredPath = "%TEMP%\\vidu-edge-profile-{port}"
+  configuredPath = "%TEMP%\\vidu-edge-profile-{account}-{port}",
+  accountName = "account"
 ) {
   const port = new URL(normalizeEndpoint(endpoint)).port || "9222";
+  const account = sanitizeAccountName(accountName);
   const template = String(
     configuredPath || "%TEMP%\\vidu-edge-profile-{port}"
   );
   const portAwareTemplate = template === "%TEMP%\\vidu-edge-profile"
     ? `${template}-{port}`
     : template;
-  return expandEnvironment(portAwareTemplate.replaceAll("{port}", port));
+  return expandEnvironment(
+    portAwareTemplate
+      .replaceAll("{port}", port)
+      .replaceAll("{account}", account)
+  );
+}
+
+export function buildEdgeLaunchArguments(options = {}) {
+  const endpoint = normalizeEndpoint(options.endpoint);
+  const port = new URL(endpoint).port || "9222";
+  const userDataDir = resolveBrowserUserDataDir(
+    endpoint,
+    options.userDataDir,
+    options.accountName
+  );
+  const argumentsList = [
+    `--remote-debugging-port=${port}`,
+    `--user-data-dir=${userDataDir}`
+  ];
+
+  if (options.proxyServer) {
+    argumentsList.push(`--proxy-server=${options.proxyServer}`);
+  }
+  if (options.proxyBypass) {
+    argumentsList.push(`--proxy-bypass-list=${options.proxyBypass}`);
+  }
+  argumentsList.push(String(options.startUrl || "about:blank"));
+  return argumentsList;
 }
 
 function appendOutput(stream, run, label) {
@@ -336,6 +515,16 @@ function expandEnvironment(value) {
     /%([^%]+)%/g,
     (_, key) => process.env[key] || process.env[key.toUpperCase()] || ""
   );
+}
+
+function sanitizeAccountName(value) {
+  const ascii = String(value || "account")
+    .normalize("NFKD")
+    .replace(/[^\x00-\x7F]+/g, " account ")
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+  return ascii || "account";
 }
 
 function finiteNumber(value, fallback) {

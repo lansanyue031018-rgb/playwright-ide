@@ -168,12 +168,57 @@
           </p>
         </div>
         <div id="historySummary" class="condition-help">正在读取历史状态...</div>
+        <div class="field">
+          <label>任务与自定义模块管理</label>
+          <div id="taskManagerSummary" class="condition-help">正在读取任务...</div>
+          <div id="taskManagerList" class="task-manager-list"></div>
+        </div>
+        <div class="field">
+          <label>运行数据与浏览器用户目录</label>
+          <div id="storageSummary" class="condition-help">点击刷新查看 runtime、缓存和浏览器 Profile 占用。</div>
+          <div id="storageList" class="storage-list"></div>
+        </div>
       </div>
       <div class="dialog-actions split-actions">
         <button id="clearHistory" type="button" class="button danger">清空历史缓存</button>
         <span class="dialog-action-spacer"></span>
         <button type="button" class="button secondary" data-action="close-settings">取消</button>
         <button type="submit" class="button primary">保存设置</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="customModuleDialog" class="task-range-dialog custom-module-dialog">
+    <form id="customModuleForm" method="dialog">
+      <div class="dialog-heading">
+        <div>
+          <span class="panel-kicker">CUSTOM MODULE</span>
+          <h2>保存自定义模块</h2>
+        </div>
+        <button type="button" class="icon-button" data-action="close-custom-module" title="关闭">×</button>
+      </div>
+      <div class="dialog-body">
+        <div class="field">
+          <label for="customModuleName">模块名称</label>
+          <input id="customModuleName" required placeholder="例如：填写账号并提交">
+        </div>
+        <label class="checkbox-field">
+          <input id="customModulePublish" type="checkbox">
+          <span>发布成左侧插入操作栏的显式功能模块</span>
+        </label>
+        <div class="field">
+          <label for="customModuleIcon">操作栏图标文字</label>
+          <input id="customModuleIcon" value="MOD" maxlength="8">
+        </div>
+        <p class="field-help">
+          取消“设为参数”后，该值会固化进复用代码壳。类型选 select 时，可在下拉选项里填 image,button,textbox 这样的固定字段。
+        </p>
+        <button id="addCustomModuleParameter" type="button" class="button secondary">添加额外参数</button>
+        <div id="customModuleParameters" class="module-parameters"></div>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="button secondary" data-action="close-custom-module">取消</button>
+        <button type="submit" class="button primary">保存模块</button>
       </div>
     </form>
   </dialog>

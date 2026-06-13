@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  buildEdgeLaunchArguments,
   createRuntimeService,
   resolveBrowserUserDataDir
 } from "./runtime-service.mjs";
@@ -27,6 +28,54 @@ test("Edge profile paths can use an explicit port placeholder", () => {
     ),
     /edge-9333$/
   );
+});
+
+test("Edge profile paths isolate both account and CDP port", () => {
+  assert.match(
+    resolveBrowserUserDataDir(
+      "http://127.0.0.1:9333",
+      "%TEMP%\\pfs-{account}-{port}",
+      "账号 2"
+    ),
+    /pfs-account-2-9333$/
+  );
+});
+
+test("Edge launch arguments include per-account proxy configuration", () => {
+  assert.deepEqual(
+    buildEdgeLaunchArguments({
+      endpoint: "http://127.0.0.1:9225",
+      startUrl: "https://example.com",
+      userDataDir: "%TEMP%\\pfs-{account}-{port}",
+      accountName: "account5",
+      proxyServer: "http://127.0.0.1:7897",
+      proxyBypass: "localhost;127.0.0.1"
+    }).slice(-3),
+    [
+      "--proxy-server=http://127.0.0.1:7897",
+      "--proxy-bypass-list=localhost;127.0.0.1",
+      "https://example.com"
+    ]
+  );
+});
+
+test("custom modules are stored with their configurable parameters", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "flow-studio-root-"));
+  const runtime = createRuntimeService(root);
+
+  const saved = await runtime.saveTask({
+    name: "填写账号",
+    mode: "custom",
+    template: 'await page.fill("#name", {{name}});',
+    parameters: [
+      { key: "name", label: "账号", type: "string", value: "Alice" }
+    ]
+  });
+  const tasks = await runtime.listTasks();
+
+  assert.equal(saved.mode, "custom");
+  assert.equal(tasks[0].template, 'await page.fill("#name", {{name}});');
+  assert.equal(tasks[0].parameters[0].label, "账号");
 });
 
 test("external scripts are copied under the IDE runtime directory", async () => {

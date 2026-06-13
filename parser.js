@@ -270,17 +270,20 @@ function parseCommentedAction(code) {
 
 function parseSpecialSection(code) {
   const connect = code.match(new RegExp(
-    String.raw`const\s+browser\s*=\s*await\s+chromium\.connectOverCDP\(\s*${STRING_LITERAL}\s*\)`
+    String.raw`(?:(?:const|let)\s+)?([A-Za-z_$][\w$]*)\s*=\s*await\s+chromium\.connectOverCDP\(\s*${STRING_LITERAL}\s*\)`
   ));
-  if (connect && !/const\s+page\b/.test(code)) {
+  if (connect && !/(?:(?:const|let)\s+)?page\s*=/.test(code)) {
     return [createStep("connect", {
-      endpoint: decodeLiteral(connect[1]),
+      endpoint: decodeLiteral(connect[2]),
+      browserVariable: connect[1],
       urlIncludes: ""
     })];
   }
 
   if (/\.contexts\(\)/.test(code) && /\.pages\(\)/.test(code)) {
-    const variable = code.match(/const\s+([A-Za-z_$][\w$]*)\s*=\s*pages\.find/);
+    const variable = code.match(
+      /(?:(?:const|let)\s+)?([A-Za-z_$][\w$]*)\s*=\s*pages\.find/
+    );
     const url = code.match(new RegExp(
       String.raw`page\.url\(\)\.includes\(\s*${STRING_LITERAL}\s*\)`
     ));
@@ -366,7 +369,7 @@ function parseStatement(statement, title) {
 
 function parseLocatorDeclaration(statement) {
   const match = statement.match(
-    /^const\s+([A-Za-z_$][\w$]*)\s*=\s*(?!await\b)([\s\S]+?)\s*;?$/
+    /^(?:(?:const|let)\s+)?([A-Za-z_$][\w$]*)\s*=\s*(?!await\b)([\s\S]+?)\s*;?$/
   );
   if (!match || !looksLikeLocator(match[2])) return null;
 
@@ -380,7 +383,7 @@ function parseLocatorDeclaration(statement) {
 
 function parseReadDeclaration(statement) {
   const match = statement.match(
-    /^const\s+([A-Za-z_$][\w$]*)\s*=\s*await\s+([\s\S]+?)\.(count|inputValue|isEnabled|isVisible|evaluate)\(([\s\S]*)\)\s*;?$/
+    /^(?:(?:const|let)\s+)?([A-Za-z_$][\w$]*)\s*=\s*await\s+([\s\S]+?)\.(count|inputValue|isEnabled|isVisible|evaluate)\(([\s\S]*)\)\s*;?$/
   );
   if (!match) return null;
 
@@ -940,13 +943,13 @@ function createTemplateStep(title, code, category) {
   });
 }
 
-function parameterizeCode(code) {
+export function parameterizeCode(code, options = {}) {
   const parameters = [];
   let index = 0;
   const source = String(code || "");
   const tokenPattern = /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|\b(true|false)\b|(?<![\w$])(\d+(?:\.\d+)?)(?![\w$])/g;
 
-  const template = source.replace(
+  let template = source.replace(
     tokenPattern,
     (match, literal, booleanValue, numberValue, offset) => {
       if (isInsideTemplateLiteral(source, offset)) return match;
@@ -963,19 +966,79 @@ function parameterizeCode(code) {
     }
   );
 
+  for (const extra of options.extraParameters || []) {
+    const key = sanitizeParameterKey(extra.key || `param${++index}`);
+    const match = String(extra.match ?? extra.value ?? "");
+    const existing = parameters.find(parameter => String(parameter.value) === match);
+    if (existing) {
+      template = template.replaceAll(`{{${existing.key}}}`, `{{${key}}}`);
+      existing.key = key;
+      existing.label = extra.label || key;
+      existing.type = extra.type || existing.type || "string";
+      existing.value = extra.value ?? match;
+      existing.options = Array.isArray(extra.options) ? extra.options : [];
+      continue;
+    }
+    const token = `{{${key}}}`;
+    if (match && !template.includes(token)) {
+      template = template.replace(match, token);
+    }
+    parameters.push({
+      key,
+      label: extra.label || key,
+      type: extra.type || "string",
+      value: extra.value ?? match,
+      options: Array.isArray(extra.options) ? extra.options : []
+    });
+  }
+
   return { template, parameters };
+}
+
+export function finalizeParameterizedTemplate(template, parameters = []) {
+  let code = String(template || "");
+  const selected = [];
+
+  for (const parameter of parameters) {
+    if (parameter.enabled === false) {
+      const token = new RegExp(`\\{\\{${escapeRegExp(parameter.key)}\\}\\}`, "g");
+      code = code.replace(token, () => renderParameterValue(parameter));
+      continue;
+    }
+
+    selected.push({
+      key: parameter.key,
+      label: parameter.label || parameter.key,
+      type: parameter.type || "string",
+      value: parameter.value,
+      options: Array.isArray(parameter.options) ? parameter.options : []
+    });
+  }
+
+  return { template: code, parameters: selected };
 }
 
 function renderParameterizedTemplate(template, parameters = []) {
   let code = String(template || "");
   for (const parameter of parameters || []) {
     const token = new RegExp(`\\{\\{${escapeRegExp(parameter.key)}\\}\\}`, "g");
-    const replacement = ["number", "boolean", "expression"].includes(parameter.type)
-      ? String(parameter.value)
-      : JSON.stringify(String(parameter.value ?? ""));
+    const replacement = renderParameterValue(parameter);
     code = code.replace(token, () => replacement);
   }
   return code.trim();
+}
+
+function renderParameterValue(parameter) {
+  return ["number", "boolean", "expression"].includes(parameter.type)
+    ? String(parameter.value)
+    : JSON.stringify(String(parameter.value ?? ""));
+}
+
+function sanitizeParameterKey(value) {
+  const key = String(value || "param")
+    .trim()
+    .replace(/[^A-Za-z0-9_$]+/g, "_");
+  return /^[A-Za-z_$]/.test(key) ? key : `param_${key}`;
 }
 
 function inferParameterLabel(source, offset, type, index) {
@@ -1012,6 +1075,10 @@ function legacyLabel(type) {
 function stripGeneratedNoise(code) {
   return stripModuleImports(String(code || ""))
     .replace(/\/\/ playwright-flow-studio:[A-Za-z0-9+/=]+\s*/g, "")
+    .replace(
+      /^\s*let\s+[A-Za-z_$][\w$]*(?:\s*,\s*[A-Za-z_$][\w$]*)*\s*;\s*$/gm,
+      ""
+    )
     .replace(/console\.log\(\s*"自动化步骤执行完成"\s*\)\s*;?/g, "")
     .trim();
 }

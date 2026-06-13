@@ -118,13 +118,22 @@ npm run serve
       </section>
 
       <section id="browser">
-        <h2>2. 多开浏览器与 CDP</h2>
-        <p>“多开浏览器”节点先检测 CDP 端口。端口已存在时直接连接；不存在时在 Windows 启动 Edge，并使用独立用户数据目录。</p>
+        <h2>2. 多开浏览器、账号隔离与代理</h2>
+        <p>“多开浏览器”节点提供三种会话模式。每个节点都可指定账号标识、变量名和独立代理。</p>
+        <table>
+          <tr><th>模式</th><th>隔离方式</th><th>适用场景</th></tr>
+          <tr><td>CDP 独立 Profile</td><td>端口 + userDataDir + Edge 启动代理</td><td>长期登录、浏览器持续保留。</td></tr>
+          <tr><td>持久化 Context</td><td>launchPersistentContext + 独立目录 + Context 代理</td><td>长期账号和带用户名密码的代理。</td></tr>
+          <tr><td>临时隔离 Context</td><td>browser.newContext + storageState + Context 代理</td><td>短任务、测试账号和可移植登录态。</td></tr>
+        </table>
         <pre>&amp; "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe" `
-  --remote-debugging-port=9222 `
-  --user-data-dir="$env:TEMP\vidu-edge-profile" `
+  --remote-debugging-port=9223 `
+  --user-data-dir="$env:TEMP\vidu-edge-profile-account1-9223" `
+  --proxy-server="http://127.0.0.1:7897" `
   "https://www.vidu.com/zh/create/character2video"</pre>
-        <div class="note">同一个端口和用户数据目录对应一个浏览器实例。需要多开时使用不同端口和不同目录。</div>
+        <div class="note">CDP 端口已存在时，现有浏览器的 Profile 和代理不会被重新配置。新账号应使用新端口。CDP 命令行模式不处理代理账号密码，认证代理请使用持久化或临时 Context。</div>
+        <p>代理认证默认从环境变量读取，例如 <code>PROXY_USERNAME</code> 和 <code>PROXY_PASSWORD</code>。直接填写的凭据会进入本机流程数据和导出文件。</p>
+        <p>stealth 开关使用社区包 <code>playwright-extra</code>。它只能减少部分常见自动化特征，不能保证通过站点风控。</p>
       </section>
 
       <section id="workflow">
@@ -148,6 +157,7 @@ npm run serve
           <li>动作：定位、点击、等待、填写、上传、键盘输入、读取状态/值、截图。</li>
           <li><code>nth()</code>：多个匹配元素中选择指定序号，索引从 0 开始。</li>
           <li>键盘：普通文本使用 <code>page.keyboard.type()</code>；Enter 等按键使用 <code>page.keyboard.press()</code>。</li>
+          <li>结果变量：统一在脚本开头使用 <code>let</code> 声明；同名结果会重复赋值，空名称自动编号为 <code>result</code>、<code>result2</code>。</li>
         </ul>
       </section>
 
@@ -161,6 +171,9 @@ npm run serve
         <h2>6. 任务复用</h2>
         <p>“按序号打包步骤”选择开始和结束步骤，将连续步骤保存为现有任务。任务节点默认收起，编辑时再展开。</p>
         <p>外部 `.mjs` 也可以作为模块任务导入。结构化任务适合继续编辑参数；模块任务适合复用已经稳定的完整脚本片段。</p>
+        <h3>自定义模块</h3>
+        <p>选中“自定义代码”节点后点击“保存为自定义模块”。PFS 会提取字符串、数字和布尔值，并允许逐项决定是否作为参数。</p>
+        <p>勾选的值会在“自定义模块”节点中显示为普通参数输入框；未勾选的值固化在代码壳中。保存后从左侧插入“自定义模块”，再选择对应模块即可复用。</p>
       </section>
 
       <section id="history">
@@ -217,6 +230,7 @@ npm run serve
         <ul>
           <li>只运行可信 `.mjs`，脚本具有当前本地用户的权限。</li>
           <li>不要在流程或仓库中保存 Cookie、Token、密码和私钥。</li>
+          <li><code>states/</code> 与 <code>.auth/</code> 已加入 Git 忽略，但仍应限制本机文件权限。</li>
           <li>本地服务未设计公网鉴权，不要直接暴露到互联网。</li>
           <li>项目采用 MIT + Commons Clause v1.0，是 source-available 许可，不是 OSI 开源许可。</li>
         </ul>
@@ -226,4 +240,3 @@ npm run serve
   </div>
 </body>
 </html>
-
