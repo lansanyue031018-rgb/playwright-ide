@@ -362,6 +362,50 @@ export const STEP_DEFINITIONS = {
   }
 };
 
+export function createPublishedModuleDefinitions(tasks = []) {
+  const definitions = {};
+  for (const task of tasks || []) {
+    if (task?.mode !== "custom" || !task.publishToLibrary) continue;
+    const type = `publishedModule_${sanitizeDefinitionKey(task.id || task.name)}`;
+    definitions[type] = {
+      label: task.name || "自定义功能模块",
+      icon: task.libraryIcon || "MOD",
+      description: "已发布到插入操作栏的自定义模块",
+      publishedModuleId: task.id,
+      fields: (task.parameters || []).map(parameter => parameterField(parameter))
+    };
+  }
+  return definitions;
+}
+
+export function createPublishedModuleStep(task) {
+  return createStep("customModule", {
+    moduleId: task.id,
+    moduleName: task.name,
+    template: task.template || "",
+    parameters: structuredClone(task.parameters || [])
+  });
+}
+
+function parameterField(parameter) {
+  const type = parameter.type === "select" ? "select" : parameter.type === "boolean" ? "checkbox" : parameter.type === "number" ? "number" : "text";
+  return {
+    key: parameter.key,
+    label: parameter.label || parameter.key,
+    type,
+    defaultValue: parameter.value,
+    options: Array.isArray(parameter.options)
+      ? parameter.options.map(option => Array.isArray(option) ? option : [option, option])
+      : []
+  };
+}
+
+function sanitizeDefinitionKey(value) {
+  return String(value || "module")
+    .replace(/[^A-Za-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "") || "module";
+}
+
 function field(key, label, type, defaultValue, extra = {}) {
   return { key, label, type, defaultValue, ...extra };
 }

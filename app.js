@@ -1,6 +1,8 @@
 import {
   STEP_DEFINITIONS,
   createId,
+  createPublishedModuleDefinitions,
+  createPublishedModuleStep,
   createStep,
   createViduTemplate,
   getAdvancedCode,
@@ -53,11 +55,18 @@ const elements = {
   customModuleDialog: document.querySelector("#customModuleDialog"),
   customModuleForm: document.querySelector("#customModuleForm"),
   customModuleName: document.querySelector("#customModuleName"),
+  customModulePublish: document.querySelector("#customModulePublish"),
+  customModuleIcon: document.querySelector("#customModuleIcon"),
+  addCustomModuleParameter: document.querySelector("#addCustomModuleParameter"),
   customModuleParameters: document.querySelector("#customModuleParameters"),
   settingsDialog: document.querySelector("#settingsDialog"),
   settingsForm: document.querySelector("#settingsForm"),
   historyLimit: document.querySelector("#historyLimit"),
   historySummary: document.querySelector("#historySummary"),
+  taskManagerSummary: document.querySelector("#taskManagerSummary"),
+  taskManagerList: document.querySelector("#taskManagerList"),
+  storageSummary: document.querySelector("#storageSummary"),
+  storageList: document.querySelector("#storageList"),
   undoFlow: document.querySelector("#undoFlow"),
   redoFlow: document.querySelector("#redoFlow"),
   stopCurrentRun: document.querySelector("#stopCurrentRun"),
@@ -88,8 +97,9 @@ bindToolbar();
 initializeRuntime();
 
 function renderLibrary() {
+  const publishedDefinitions = createPublishedModuleDefinitions(taskRegistry);
   elements.stepLibrary.replaceChildren(
-    ...Object.entries(STEP_DEFINITIONS)
+    ...Object.entries({ ...STEP_DEFINITIONS, ...publishedDefinitions })
       .filter(([, definition]) => definition.library !== false)
       .map(([type, definition]) => {
         const button = document.createElement("button");
@@ -404,6 +414,15 @@ function createParameterFields(step) {
       control = document.createElement("input");
       control.type = "checkbox";
       control.checked = parameter.value === true || parameter.value === "true";
+    } else if (parameter.type === "select") {
+      control = document.createElement("select");
+      (parameter.options || []).forEach(optionValue => {
+        const option = document.createElement("option");
+        option.value = optionValue;
+        option.textContent = optionValue;
+        option.selected = String(parameter.value) === String(optionValue);
+        control.append(option);
+      });
     } else {
       control = document.createElement("input");
       control.type = parameter.type === "number" ? "number" : "text";
@@ -551,7 +570,11 @@ function refreshGeneratedOutput(step) {
 }
 
 function addStep(type) {
-  const step = createStep(type);
+  const published = type.startsWith("publishedModule_")
+    ? taskRegistry.find(task => task.id === type.slice("publishedModule_".length).replaceAll("_", "-")) ||
+      taskRegistry.find(task => `publishedModule_${String(task.id).replace(/[^A-Za-z0-9_]+/g, "_").replace(/^_+|_+$/g, "")}` === type)
+    : null;
+  const step = published ? createPublishedModuleStep(published) : createStep(type);
   insertStep(state.steps, state.selectedId, step);
   state.selectedId = step.id;
   renderMutation();
@@ -730,6 +753,7 @@ function bindToolbar() {
       elements.taskRangeDialog.close();
     }));
   elements.customModuleForm.addEventListener("submit", saveCustomModule);
+  elements.addCustomModuleParameter.addEventListener("click", addCustomModuleParameter);
   elements.customModuleDialog
     .querySelectorAll('[data-action="close-custom-module"]')
     .forEach(button => button.addEventListener("click", () => {
@@ -985,6 +1009,8 @@ function handleHistoryShortcut(event) {
 function openSettings() {
   elements.historyLimit.value = String(historyStatus.limit);
   renderHistoryStatus();
+  renderTaskManager();
+  refreshStorageList();
   elements.settingsDialog.showModal();
 }
 
@@ -1024,6 +1050,98 @@ function renderHistoryStatus() {
     `当前位置 ${historyStatus.index < 0 ? 0 : historyStatus.index + 1}/${historyStatus.count}。`;
 }
 
+function renderTaskManager() {
+  if (!elements.taskManagerList) return;
+  elements.taskManagerSummary.textContent = taskRegistry.length
+    ? `已保存 ${taskRegistry.length} 个任务/模块。自定义模块可在这里发布、改名或删除。`
+    : "暂无已保存任务或自定义模块。";
+  elements.taskManagerList.replaceChildren(...taskRegistry.map(task => {
+    const row = document.createElement("div");
+    row.className = "task-manager-row";
+    row.innerHTML = `
+      <div class="task-manager-main">
+        <input data-task-field="name" value="${escapeAttribute(task.name)}" aria-label="任务名称">
+        <small>${escapeHtml(task.mode === "custom" ? "自定义模块" : task.mode === "module" ? "MJS 模块任务" : "步骤组任务")}</small>
+      </div>
+      <label class="checkbox-field task-publish-toggle">
+        <input type="checkbox" data-task-field="publishToLibrary" ${task.publishToLibrary ? "checked" : ""} ${task.mode === "custom" ? "" : "disabled"}>
+        <span>发布到插入栏</span>
+      </label>
+      <input data-task-field="libraryIcon" value="${escapeAttribute(task.libraryIcon || "MOD")}" maxlength="8" aria-label="图标" ${task.mode === "custom" ? "" : "disabled"}>
+      <button type="button" class="button secondary" data-task-action="save">保存</button>
+      <button type="button" class="button danger" data-task-action="delete">删除</button>
+    `;
+    row.querySelector('[data-task-action="save"]').addEventListener("click", () => saveManagedTask(task, row));
+    row.querySelector('[data-task-action="delete"]').addEventListener("click", () => deleteManagedTask(task));
+    return row;
+  }));
+}
+
+async function saveManagedTask(task, row) {
+  const payload = {
+    name: row.querySelector('[data-task-field="name"]').value.trim() || task.name,
+    publishToLibrary: row.querySelector('[data-task-field="publishToLibrary"]').checked,
+    libraryIcon: row.querySelector('[data-task-field="libraryIcon"]').value.trim() || "MOD"
+  };
+  await api(`/api/tasks/${encodeURIComponent(task.id)}/update`, payload);
+  await refreshTasks();
+  showToast(`已更新：${payload.name}`);
+}
+
+async function deleteManagedTask(task) {
+  if (!confirm(`删除 ${task.name}？已插入流程里的步骤不会被自动移除。`)) return;
+  await api(`/api/tasks/${encodeURIComponent(task.id)}/delete`, {});
+  await refreshTasks();
+  showToast(`已删除：${task.name}`);
+}
+
+async function refreshStorageList() {
+  if (!elements.storageList) return;
+  elements.storageSummary.textContent = "正在扫描运行数据...";
+  try {
+    const result = await api("/api/storage");
+    const items = result.storage.items || [];
+    elements.storageSummary.textContent = `共 ${items.length} 项，约 ${formatBytes(result.storage.totalBytes || 0)}。`;
+    elements.storageList.replaceChildren(...items.map(item => {
+      const row = document.createElement("div");
+      row.className = "storage-row";
+      row.innerHTML = `
+        <span><strong>${escapeHtml(storageTypeLabel(item.type))}</strong> ${escapeHtml(item.name)}</span>
+        <small>${escapeHtml(item.relativePath)} · ${formatBytes(item.bytes)}</small>
+        <button type="button" class="button danger" data-storage-id="${escapeAttribute(item.id)}">删除</button>
+      `;
+      row.querySelector("button").addEventListener("click", () => deleteStorageItem(item));
+      return row;
+    }));
+  } catch (error) {
+    elements.storageSummary.textContent = `运行数据扫描失败：${error.message}`;
+  }
+}
+
+async function deleteStorageItem(item) {
+  if (!confirm(`删除 ${item.name}？会移除对应 runtime/cache/profile 文件。`)) return;
+  await api("/api/storage/delete", { id: item.id });
+  await refreshStorageList();
+  await refreshTasks();
+  showToast(`已删除：${item.name}`);
+}
+
+function storageTypeLabel(type) {
+  return {
+    script: "脚本",
+    task: "任务",
+    cache: "缓存",
+    "browser-profile": "浏览器用户目录"
+  }[type] || type;
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes) || 0;
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
 async function saveTask(sourceSteps, defaultName, requestedName = "") {
   const name = requestedName || prompt("任务名称", defaultName);
   if (!name) return false;
@@ -1060,6 +1178,8 @@ async function importTaskModule() {
 async function refreshTasks() {
   const result = await api("/api/tasks");
   taskRegistry = result.tasks || [];
+  renderLibrary();
+  renderTaskManager();
   if (["task", "customModule"].includes(selectedStep()?.type)) renderInspector();
 }
 
@@ -1103,6 +1223,8 @@ function openCustomModuleDialog() {
     }))
   };
   elements.customModuleName.value = "";
+  elements.customModulePublish.checked = false;
+  elements.customModuleIcon.value = "MOD";
   renderCustomModuleParameters();
   elements.customModuleDialog.showModal();
   elements.customModuleName.focus();
@@ -1129,11 +1251,12 @@ function renderCustomModuleParameters() {
         </label>
         <input data-module-index="${index}" data-module-field="label" value="${escapeAttribute(parameter.label)}" aria-label="参数名称">
         <select data-module-index="${index}" data-module-field="type" aria-label="参数类型">
-          ${["string", "number", "boolean", "expression"].map(type =>
+          ${["string", "number", "boolean", "expression", "select"].map(type =>
             `<option value="${type}" ${parameter.type === type ? "selected" : ""}>${type}</option>`
           ).join("")}
         </select>
         <input data-module-index="${index}" data-module-field="value" value="${escapeAttribute(parameter.value)}" aria-label="默认值">
+        <input data-module-index="${index}" data-module-field="optionsText" value="${escapeAttribute((parameter.options || []).join(","))}" placeholder="下拉选项：image,button,textbox" aria-label="下拉选项">
       `;
       return row;
     })
@@ -1147,9 +1270,34 @@ function updateCustomModuleDraft(event) {
   const field = event.target.dataset.moduleField;
   const parameter = customModuleDraft?.parameters?.[index];
   if (!parameter || !field) return;
+  if (field === "optionsText") {
+    parameter.options = event.target.value
+      .split(",")
+      .map(item => item.trim())
+      .filter(Boolean);
+    return;
+  }
   parameter[field] = event.target.type === "checkbox"
     ? event.target.checked
     : event.target.value;
+}
+
+async function addCustomModuleParameter() {
+  if (!customModuleDraft) return;
+  const key = `param${customModuleDraft.parameters.length + 1}`;
+  const match = prompt("要变成参数的原文片段，例如 textbox 或 #submit", "");
+  if (!match) return;
+  const label = prompt("参数名称", key) || key;
+  customModuleDraft.template = customModuleDraft.template.replace(match, `{{${key}}}`);
+  customModuleDraft.parameters.push({
+    key,
+    label,
+    type: "string",
+    value: match,
+    options: [],
+    enabled: true
+  });
+  renderCustomModuleParameters();
 }
 
 async function saveCustomModule(event) {
@@ -1166,7 +1314,9 @@ async function saveCustomModule(event) {
       name,
       mode: "custom",
       template: module.template,
-      parameters: module.parameters
+      parameters: module.parameters,
+      publishToLibrary: elements.customModulePublish.checked,
+      libraryIcon: elements.customModuleIcon.value || "MOD"
     });
     await refreshTasks();
     elements.customModuleDialog.close();

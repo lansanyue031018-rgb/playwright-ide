@@ -4,6 +4,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  rm,
   stat,
   writeFile
 } from "node:fs/promises";
@@ -15,13 +16,15 @@ export function createRuntimeService(root) {
   const runtimeRoot = path.join(root, "runtime");
   const scriptsDir = path.join(runtimeRoot, "scripts");
   const tasksDir = path.join(runtimeRoot, "tasks");
+  const browserProfilesDir = path.join(runtimeRoot, "browser-profiles");
   const runs = new Map();
   const processes = new Map();
 
   async function ensureDirectories() {
     await Promise.all([
       mkdir(scriptsDir, { recursive: true }),
-      mkdir(tasksDir, { recursive: true })
+      mkdir(tasksDir, { recursive: true }),
+      mkdir(browserProfilesDir, { recursive: true })
     ]);
   }
 
@@ -160,8 +163,10 @@ export function createRuntimeService(root) {
       modulePath: String(task.modulePath || ""),
       template: mode === "custom" ? String(task.template || "") : "",
       parameters: mode === "custom" && Array.isArray(task.parameters)
-        ? task.parameters
+        ? normalizeParameters(task.parameters)
         : [],
+      publishToLibrary: mode === "custom" && Boolean(task.publishToLibrary),
+      libraryIcon: String(task.libraryIcon || "MOD").trim() || "MOD",
       updatedAt: new Date().toISOString()
     };
     await writeFile(
@@ -170,6 +175,60 @@ export function createRuntimeService(root) {
       "utf8"
     );
     return record;
+  }
+
+
+  async function updateTask(id, changes) {
+    const existing = await readTask(id);
+    if (!existing) throw new Error("未找到任务");
+    return saveTask({ ...existing, ...changes, id });
+  }
+
+  async function deleteTask(id) {
+    const safeId = safeTaskId(id);
+    await rm(path.join(tasksDir, `${safeId}.json`), { force: true });
+    return { id: safeId };
+  }
+
+  async function readTask(id) {
+    const safeId = safeTaskId(id);
+    try {
+      return JSON.parse(await readFile(path.join(tasksDir, `${safeId}.json`), "utf8"));
+    } catch {
+      return null;
+    }
+  }
+
+  async function listStorageItems() {
+    await ensureDirectories();
+    const groups = [
+      ["script", scriptsDir, "runtime/scripts"],
+      ["task", tasksDir, "runtime/tasks"],
+      ["browser-profile", browserProfilesDir, "runtime/browser-profiles"],
+      ["cache", path.join(root, ".flow-cache"), ".flow-cache"]
+    ];
+    const items = [];
+    for (const [type, absoluteDir, relativeBase] of groups) {
+      items.push(...await storageEntries(type, absoluteDir, relativeBase));
+    }
+    const totalBytes = items.reduce((sum, item) => sum + item.bytes, 0);
+    return { items, totalBytes };
+  }
+
+  async function removeStorageItem(id) {
+    const item = parseStorageId(id);
+    const bases = {
+      script: scriptsDir,
+      task: tasksDir,
+      "browser-profile": browserProfilesDir,
+      cache: path.join(root, ".flow-cache")
+    };
+    const base = bases[item.type];
+    if (!base) throw new Error("不允许删除该类型");
+    const target = path.resolve(base, item.relativePath);
+    if (!isInside(target, base)) throw new Error("不允许删除运行目录外的数据");
+    await rm(target, { recursive: true, force: true });
+    return { id };
   }
 
   async function importTaskModule(sourcePath, name) {
@@ -189,13 +248,89 @@ export function createRuntimeService(root) {
     copyScript,
     getLatestRun,
     getRun,
+    deleteTask,
     importTaskModule,
+    listStorageItems,
     listTasks,
+    removeStorageItem,
     runScript,
     saveTask,
     stopRun,
+    updateTask,
     writeCurrentScript
   };
+}
+
+async function storageEntries(type, absoluteDir, relativeBase) {
+  if (!existsSync(absoluteDir)) return [];
+  const entries = await readdir(absoluteDir, { withFileTypes: true });
+  const items = [];
+  for (const entry of entries) {
+    const absolutePath = path.join(absoluteDir, entry.name);
+    const bytes = await directorySize(absolutePath);
+    const relativePath = `${relativeBase}/${entry.name}`.replace(/\\/g, "/");
+    let name = entry.name;
+    if (type === "task" && entry.isFile() && entry.name.endsWith(".json")) {
+      try {
+        const task = JSON.parse(await readFile(absolutePath, "utf8"));
+        name = task.name || name;
+      } catch {}
+    }
+    items.push({
+      id: `${type}:${entry.name}`,
+      type,
+      name,
+      relativePath,
+      bytes,
+      directory: entry.isDirectory()
+    });
+  }
+  return items.sort((a, b) => a.relativePath.localeCompare(b.relativePath, "zh-CN"));
+}
+
+async function directorySize(target) {
+  const info = await stat(target);
+  if (!info.isDirectory()) return info.size;
+  const entries = await readdir(target, { withFileTypes: true });
+  let total = 0;
+  for (const entry of entries) {
+    total += await directorySize(path.join(target, entry.name));
+  }
+  return total;
+}
+
+function parseStorageId(id) {
+  const [type, ...rest] = String(id || "").split(":");
+  const relativePath = rest.join(":");
+  if (!type || !relativePath || relativePath.includes("..")) {
+    throw new Error("不允许删除运行目录外的数据");
+  }
+  return { type, relativePath };
+}
+
+function isInside(target, base) {
+  const relative = path.relative(path.resolve(base), target);
+  return relative && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function safeTaskId(id) {
+  const value = String(id || "");
+  if (!/^[A-Za-z0-9._-]+$/.test(value)) throw new Error("任务 ID 无效");
+  return value;
+}
+
+function normalizeParameters(parameters) {
+  return parameters.map(parameter => ({
+    key: String(parameter.key || ""),
+    label: String(parameter.label || parameter.key || "参数"),
+    type: ["string", "number", "boolean", "expression", "select"].includes(parameter.type)
+      ? parameter.type
+      : "string",
+    value: parameter.value,
+    options: Array.isArray(parameter.options)
+      ? parameter.options.map(option => String(option)).filter(Boolean)
+      : []
+  }));
 }
 
 export async function probeCdp(endpoint) {

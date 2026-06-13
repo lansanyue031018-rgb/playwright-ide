@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   STEP_DEFINITIONS,
+  createPublishedModuleDefinitions,
   createStep,
   createViduTemplate,
   generateMjs
@@ -177,6 +178,71 @@ test("custom code can become a parameterized reusable module", () => {
   assert.equal(module.parameters.length, 2);
   assert.match(code, /page\.locator\("#nickname"\)\.fill\("Alice"\)/);
   assert.match(code, /waitForTimeout\(2500\)/);
+});
+
+test("custom module parameters support manual spans and select options", () => {
+  const draft = parameterizeCode(
+    'await page.getByRole("textbox", { name: "账号" }).click();',
+    {
+      extraParameters: [
+        {
+          key: "roleKind",
+          label: "角色类型",
+          type: "select",
+          value: "textbox",
+          options: ["image", "button", "textbox"],
+          match: "textbox"
+        }
+      ]
+    }
+  );
+
+  const module = finalizeParameterizedTemplate(
+    draft.template,
+    draft.parameters
+  );
+  const role = module.parameters.find(parameter => parameter.key === "roleKind");
+  const code = generateMjs([
+    createStep("customModule", {
+      moduleName: "点角色",
+      template: module.template,
+      parameters: module.parameters.map(parameter =>
+        parameter.key === "roleKind"
+          ? { ...parameter, value: "button" }
+          : parameter
+      )
+    })
+  ]);
+
+  assert.equal(role.type, "select");
+  assert.deepEqual(role.options, ["image", "button", "textbox"]);
+  assert.match(code, /getByRole\("button", \{ name: "账号" \}\)/);
+});
+
+test("published custom modules become explicit library definitions", () => {
+  const definitions = createPublishedModuleDefinitions([
+    {
+      id: "module-1",
+      name: "点击角色",
+      mode: "custom",
+      template: 'await page.getByRole({{roleKind}}).click();',
+      publishToLibrary: true,
+      libraryIcon: "ROLE",
+      parameters: [
+        {
+          key: "roleKind",
+          label: "角色类型",
+          type: "select",
+          value: "button",
+          options: ["image", "button"]
+        }
+      ]
+    }
+  ]);
+
+  assert.equal(definitions.publishedModule_module_1.label, "点击角色");
+  assert.equal(definitions.publishedModule_module_1.icon, "ROLE");
+  assert.equal(definitions.publishedModule_module_1.fields[0].type, "select");
 });
 
 test("stealth is imported only when a browser node enables it", () => {

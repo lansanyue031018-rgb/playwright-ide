@@ -112,9 +112,37 @@ async function handleApi(request, response, requestUrl) {
     return;
   }
 
+  if (request.method === "GET" && requestUrl.pathname === "/api/storage") {
+    sendJson(response, 200, { ok: true, storage: await runtime.listStorageItems() });
+    return;
+  }
+
+  if (request.method === "POST" && requestUrl.pathname === "/api/storage/delete") {
+    const body = await readJson(request);
+    sendJson(response, 200, {
+      ok: true,
+      removed: await runtime.removeStorageItem(body.id)
+    });
+    return;
+  }
+
   if (request.method === "POST" && requestUrl.pathname === "/api/tasks") {
     const task = await runtime.saveTask(await readJson(request));
     sendJson(response, 200, { ok: true, task });
+    return;
+  }
+
+  const taskActionMatch = requestUrl.pathname.match(/^\/api\/tasks\/([^/]+)\/(update|delete)$/);
+  if (request.method === "POST" && taskActionMatch) {
+    const id = decodeURIComponent(taskActionMatch[1]);
+    if (taskActionMatch[2] === "delete") {
+      sendJson(response, 200, { ok: true, task: await runtime.deleteTask(id) });
+    } else {
+      sendJson(response, 200, {
+        ok: true,
+        task: await runtime.updateTask(id, await readJson(request))
+      });
+    }
     return;
   }
 

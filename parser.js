@@ -943,13 +943,13 @@ function createTemplateStep(title, code, category) {
   });
 }
 
-export function parameterizeCode(code) {
+export function parameterizeCode(code, options = {}) {
   const parameters = [];
   let index = 0;
   const source = String(code || "");
   const tokenPattern = /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|\b(true|false)\b|(?<![\w$])(\d+(?:\.\d+)?)(?![\w$])/g;
 
-  const template = source.replace(
+  let template = source.replace(
     tokenPattern,
     (match, literal, booleanValue, numberValue, offset) => {
       if (isInsideTemplateLiteral(source, offset)) return match;
@@ -965,6 +965,32 @@ export function parameterizeCode(code) {
       return `{{${key}}}`;
     }
   );
+
+  for (const extra of options.extraParameters || []) {
+    const key = sanitizeParameterKey(extra.key || `param${++index}`);
+    const match = String(extra.match ?? extra.value ?? "");
+    const existing = parameters.find(parameter => String(parameter.value) === match);
+    if (existing) {
+      template = template.replaceAll(`{{${existing.key}}}`, `{{${key}}}`);
+      existing.key = key;
+      existing.label = extra.label || key;
+      existing.type = extra.type || existing.type || "string";
+      existing.value = extra.value ?? match;
+      existing.options = Array.isArray(extra.options) ? extra.options : [];
+      continue;
+    }
+    const token = `{{${key}}}`;
+    if (match && !template.includes(token)) {
+      template = template.replace(match, token);
+    }
+    parameters.push({
+      key,
+      label: extra.label || key,
+      type: extra.type || "string",
+      value: extra.value ?? match,
+      options: Array.isArray(extra.options) ? extra.options : []
+    });
+  }
 
   return { template, parameters };
 }
@@ -984,7 +1010,8 @@ export function finalizeParameterizedTemplate(template, parameters = []) {
       key: parameter.key,
       label: parameter.label || parameter.key,
       type: parameter.type || "string",
-      value: parameter.value
+      value: parameter.value,
+      options: Array.isArray(parameter.options) ? parameter.options : []
     });
   }
 
@@ -1005,6 +1032,13 @@ function renderParameterValue(parameter) {
   return ["number", "boolean", "expression"].includes(parameter.type)
     ? String(parameter.value)
     : JSON.stringify(String(parameter.value ?? ""));
+}
+
+function sanitizeParameterKey(value) {
+  const key = String(value || "param")
+    .trim()
+    .replace(/[^A-Za-z0-9_$]+/g, "_");
+  return /^[A-Za-z_$]/.test(key) ? key : `param_${key}`;
 }
 
 function inferParameterLabel(source, offset, type, index) {
